@@ -124,26 +124,29 @@ class ThalamicRouter(nn.Module):
 
 
 def diversity_loss(domain_scores: Tensor) -> Tensor:
-    """Penalize high correlation between cortex activation patterns.
+    """Penalize uniform routing — encourage each sample to prefer specific cortices.
 
-    Encourages cortices to specialize on different inputs.
+    Uses entropy of per-sample routing distribution as a sharpness penalty.
+    Uniform scores (all cortices equal) → max entropy → loss ≈ 1.0.
+    Spiky scores (one cortex dominates) → low entropy → loss ≈ 0.0.
+
+    Combined with load_balance_loss, this forces different samples to prefer
+    different cortices — producing cortex specialization.
 
     Args:
-        domain_scores: [batch, num_cortices] activation scores.
+        domain_scores: [batch, num_cortices] activation scores in [0, 1].
 
     Returns:
-        Scalar diversity loss.
+        Scalar diversity loss normalized to [0, 1].
     """
-    # Correlation matrix of cortex activations across the batch
-    # domain_scores: [batch, K] — each column is one cortex's activation pattern
-    scores_norm = domain_scores - domain_scores.mean(dim=0, keepdim=True)
-    cov = (scores_norm.T @ scores_norm) / (domain_scores.shape[0] - 1 + 1e-8)
-
-    # Penalize off-diagonal elements (cross-cortex correlation)
-    mask = 1.0 - torch.eye(cov.shape[0], device=cov.device)
-    off_diag = (cov * mask).pow(2).sum() / (mask.sum() + 1e-8)
-
-    return off_diag
+    K = domain_scores.shape[1]
+    # Normalize to per-sample probability distribution
+    probs = domain_scores / (domain_scores.sum(dim=-1, keepdim=True) + 1e-8)
+    # Per-sample entropy (high = uniform = bad)
+    entropy = -(probs * (probs + 1e-8).log()).sum(dim=-1)  # [batch]
+    # Normalize by max possible entropy: log(K)
+    max_entropy = torch.tensor(float(K), device=domain_scores.device).log()
+    return (entropy / (max_entropy + 1e-8)).mean()
 
 
 def load_balance_loss(domain_scores: Tensor, num_cortices: int) -> Tensor:

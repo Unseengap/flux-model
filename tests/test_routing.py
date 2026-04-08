@@ -43,7 +43,7 @@ class TestDiversityLoss:
         """All cortices activating equally → high diversity loss."""
         scores = torch.ones(32, 5) * 0.8
         loss = diversity_loss(scores)
-        assert loss.item() >= 0
+        assert loss.item() > 0.9  # uniform scores → near-max entropy
 
     def test_orthogonal_scores_low_loss(self):
         """Each cortex activating on different inputs → low diversity loss."""

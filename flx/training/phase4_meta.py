@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 from ..delta import FLXDelta
 from ..meta_gen import MetaDeltaGenerator
 from ..model import FLXNano
+from .utils import EarlyStopState, evaluate_val_loss, save_checkpoint
 
 
 class ErrorBuffer:
@@ -176,9 +177,12 @@ def train_phase4(
     model: FLXNano,
     meta_gen: MetaDeltaGenerator,
     dataloader: DataLoader,
+    val_dataloader: DataLoader | None = None,
     num_epochs: int = 3,
     lr: float = 1e-4,
     buffer_threshold: int = 32,
+    patience: int = 3,
+    checkpoint_dir: str | None = None,
     device: str = "cpu",
     log_every: int = 10,
 ) -> list[dict[str, float]]:
@@ -191,9 +195,12 @@ def train_phase4(
         model: FLXNano.
         meta_gen: Meta-delta generator.
         dataloader: Training data.
+        val_dataloader: Validation data for early stopping. If None, uses acceptance rate.
         num_epochs: Training epochs.
         lr: Learning rate for meta-gen.
         buffer_threshold: Minimum errors before generating a delta.
+        patience: Early stop after N epochs without improvement.
+        checkpoint_dir: If set, save per-epoch checkpoints here.
         device: Device.
         log_every: Log interval.
 
@@ -208,6 +215,10 @@ def train_phase4(
     # Only train meta-generator in Phase 4
     optimizer = torch.optim.AdamW(meta_gen.parameters(), lr=lr)
 
+    early_stop = EarlyStopState(
+        patience=patience,
+        mode="min" if val_dataloader is not None else "max",
+    )
     error_buffer = ErrorBuffer(max_size=256, d_model=model.d_model)
     history = []
     step = 0
@@ -215,6 +226,9 @@ def train_phase4(
     total_generated = 0
 
     for epoch in range(num_epochs):
+        epoch_accepted = 0
+        epoch_generated = 0
+
         for batch in dataloader:
             input_ids = batch[0].to(device)
             targets = batch[1].to(device)
@@ -252,8 +266,10 @@ def train_phase4(
                 optimizer.step()
 
                 total_generated += 1
+                epoch_generated += 1
                 if losses["accepted"].item() > 0:
                     accepted_count += 1
+                    epoch_accepted += 1
 
                 record = {}
                 for k, v in losses.items():
@@ -280,4 +296,26 @@ def train_phase4(
 
             step += 1
 
+        # End of epoch — checkpoint + early stopping
+        epoch_rate = epoch_accepted / max(epoch_generated, 1)
+
+        if val_dataloader is not None:
+            val_loss = evaluate_val_loss(model, val_dataloader, device=device)
+            stop_metric = val_loss
+            print(f"Phase 4 | epoch {epoch} acceptance_rate={epoch_rate:.2f} "
+                  f"({epoch_accepted}/{epoch_generated}) val_loss={val_loss:.4f}")
+        else:
+            stop_metric = epoch_rate
+            print(f"Phase 4 | epoch {epoch} acceptance_rate={epoch_rate:.2f} "
+                  f"({epoch_accepted}/{epoch_generated})")
+
+        if checkpoint_dir:
+            save_checkpoint(meta_gen, f"{checkpoint_dir}/phase4_epoch{epoch}.pt", epoch,
+                            {"acceptance_rate": epoch_rate})
+
+        if early_stop.check(stop_metric, epoch, meta_gen):
+            print(f"Phase 4 | Early stop at epoch {epoch} (patience={patience})")
+            break
+
+    early_stop.restore_best(meta_gen)
     return history

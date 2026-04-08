@@ -11,9 +11,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+from torch.utils.data import DataLoader
 
 from ..memory import EpisodicBuffer, EpisodicCompressor, MemoryController
 from ..model import FLXNano
+from .utils import EarlyStopState, evaluate_val_loss, save_checkpoint
 
 
 def phase3_training_step(
@@ -123,8 +125,11 @@ def train_phase3(
     model: FLXNano,
     compressor: EpisodicCompressor,
     conversation_data: list[list[tuple[Tensor, Tensor]]],
+    val_dataloader: DataLoader | None = None,
     num_epochs: int = 5,
     lr: float = 2e-5,
+    patience: int = 3,
+    checkpoint_dir: str | None = None,
     device: str = "cpu",
     log_every: int = 10,
 ) -> list[dict[str, float]]:
@@ -134,8 +139,11 @@ def train_phase3(
         model: FLXNano with memory controller.
         compressor: Episodic compressor (trained jointly).
         conversation_data: List of conversations, each a list of (input, target) turns.
+        val_dataloader: Validation data for early stopping. If None, uses train loss.
         num_epochs: Training epochs.
         lr: Learning rate.
+        patience: Early stop after N epochs without improvement on val loss.
+        checkpoint_dir: If set, save per-epoch checkpoints here.
         device: Device.
         log_every: Log interval.
 
@@ -159,10 +167,14 @@ def train_phase3(
         ],
     )
 
+    early_stop = EarlyStopState(patience=patience, mode="min")
     history = []
     step = 0
 
     for epoch in range(num_epochs):
+        epoch_pred_sum = 0.0
+        epoch_steps = 0
+
         for conv_idx, conversation in enumerate(conversation_data):
             # Move conversation to device
             conversation_device = [
@@ -181,6 +193,8 @@ def train_phase3(
             record["conv_idx"] = conv_idx
             record["step"] = step
             history.append(record)
+            epoch_pred_sum += record["pred_loss"]
+            epoch_steps += 1
 
             if step % log_every == 0:
                 print(
@@ -192,4 +206,24 @@ def train_phase3(
 
             step += 1
 
+        # End of epoch — checkpoint + early stopping
+        epoch_avg_pred = epoch_pred_sum / max(epoch_steps, 1)
+
+        if val_dataloader is not None:
+            val_loss = evaluate_val_loss(model, val_dataloader, device=device)
+            stop_metric = val_loss
+            print(f"Phase 3 | epoch {epoch} train_pred={epoch_avg_pred:.4f} val_loss={val_loss:.4f}")
+        else:
+            stop_metric = epoch_avg_pred
+            print(f"Phase 3 | epoch {epoch} avg pred_loss={epoch_avg_pred:.4f}")
+
+        if checkpoint_dir:
+            save_checkpoint(model, f"{checkpoint_dir}/phase3_epoch{epoch}.pt", epoch,
+                            {"avg_pred_loss": epoch_avg_pred})
+
+        if early_stop.check(stop_metric, epoch, model):
+            print(f"Phase 3 | Early stop at epoch {epoch} (patience={patience})")
+            break
+
+    early_stop.restore_best(model)
     return history

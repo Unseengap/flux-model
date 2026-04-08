@@ -22,6 +22,7 @@ from torch.utils.data import DataLoader
 
 from ..model import FLXNano
 from ..router import ThalamicRouter, diversity_loss, load_balance_loss
+from .utils import EarlyStopState, evaluate_val_loss, save_checkpoint
 
 
 def phase0_training_step(
@@ -106,12 +107,16 @@ def phase0_training_step(
 def train_phase0(
     model: FLXNano,
     dataloader: DataLoader,
+    val_dataloader: DataLoader | None = None,
     num_epochs: int = 10,
     lr: float = 1e-4,
-    lambda_div: float = 0.1,
+    lambda_div: float = 1.0,
     lambda_bal_start: float = 0.5,
     lambda_bal_end: float = 0.05,
     dropout_top_prob: float = 0.1,
+    weight_decay: float = 0.01,
+    patience: int = 3,
+    checkpoint_dir: str | None = None,
     device: str = "cpu",
     log_every: int = 100,
 ) -> list[dict[str, float]]:
@@ -123,12 +128,16 @@ def train_phase0(
     Args:
         model: FLXNano with thalamic router attached.
         dataloader: Training data yielding (input_ids, targets) batches.
+        val_dataloader: Validation data for early stopping. If None, uses train loss.
         num_epochs: Number of training epochs.
         lr: Learning rate.
         lambda_div: Diversity loss coefficient.
         lambda_bal_start: Initial load balance coefficient.
         lambda_bal_end: Final load balance coefficient.
         dropout_top_prob: Top-cortex dropout probability.
+        weight_decay: AdamW weight decay coefficient.
+        patience: Early stop after N epochs without improvement on val loss.
+        checkpoint_dir: If set, save per-epoch checkpoints here.
         device: Training device.
         log_every: Log metrics every N steps.
 
@@ -148,13 +157,18 @@ def train_phase0(
             {"params": model.decoder.parameters()},
         ],
         lr=lr,
+        weight_decay=weight_decay,
     )
 
+    early_stop = EarlyStopState(patience=patience, mode="min")
     total_steps = num_epochs * len(dataloader)
     history = []
 
     step = 0
     for epoch in range(num_epochs):
+        epoch_pred_sum = 0.0
+        epoch_steps = 0
+
         for batch in dataloader:
             input_ids = batch[0].to(device)
             targets = batch[1].to(device)
@@ -182,6 +196,8 @@ def train_phase0(
             record["epoch"] = epoch
             record["step"] = step
             history.append(record)
+            epoch_pred_sum += record["pred_loss"]
+            epoch_steps += 1
 
             if step % log_every == 0:
                 print(
@@ -195,4 +211,25 @@ def train_phase0(
 
             step += 1
 
+        # End of epoch — checkpoint + early stopping
+        epoch_avg_pred = epoch_pred_sum / max(epoch_steps, 1)
+
+        # Use val loss for early stopping if available, else train loss
+        if val_dataloader is not None:
+            val_loss = evaluate_val_loss(model, val_dataloader, device=device)
+            stop_metric = val_loss
+            print(f"Phase 0 | epoch {epoch} train_pred={epoch_avg_pred:.4f} val_loss={val_loss:.4f}")
+        else:
+            stop_metric = epoch_avg_pred
+            print(f"Phase 0 | epoch {epoch} avg pred_loss={epoch_avg_pred:.4f}")
+
+        if checkpoint_dir:
+            save_checkpoint(model, f"{checkpoint_dir}/phase0_epoch{epoch}.pt", epoch,
+                            {"avg_pred_loss": epoch_avg_pred})
+
+        if early_stop.check(stop_metric, epoch, model):
+            print(f"Phase 0 | Early stop at epoch {epoch} (patience={patience})")
+            break
+
+    early_stop.restore_best(model)
     return history
