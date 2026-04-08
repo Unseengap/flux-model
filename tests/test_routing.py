@@ -44,20 +44,39 @@ class TestDiversityLoss:
         scores = torch.zeros(32, 5)
         scores[:, 0] = 1.0  # every sample → cortex 0
         loss = diversity_loss(scores)
-        assert loss.item() > 0.9  # collapsed → near-max loss
+        assert loss.item() > 0.85  # spikiness ≈ 0, spread ≈ 0.9
 
     def test_spread_routing_low_loss(self):
         """Different samples routing to different cortices → low diversity loss."""
         # 5 groups of samples, each preferring a different cortex
         scores = torch.eye(5).repeat(6, 1)  # 30 samples, evenly spread
         loss = diversity_loss(scores)
-        assert loss.item() < 0.1  # diverse usage → near-zero loss
+        assert loss.item() < 0.1  # spikiness=0 (max=1), spread≈0
 
-    def test_uniform_scores_low_loss(self):
-        """All cortices activating equally → batch utilization is uniform → low loss."""
+    def test_uniform_scores_penalized(self):
+        """Uniform 0.5 scores = indecisive routing → moderate penalty.
+
+        This is the key init scenario: sigmoid outputs near 0.5 must produce
+        non-zero loss with gradient so the router can start specializing.
+        """
         scores = torch.ones(32, 5) * 0.5
         loss = diversity_loss(scores)
-        assert loss.item() < 0.05  # uniform → utilization is balanced
+        assert 0.3 < loss.item() < 0.7  # spikiness ≈ 0.5, spread ≈ 0
+
+    def test_zero_scores_high_loss(self):
+        """All scores near zero (bypass collapse) → high loss."""
+        scores = torch.ones(32, 5) * 0.01
+        loss = diversity_loss(scores)
+        assert loss.item() > 0.8  # spikiness ≈ 0.99
+
+    def test_gradient_at_uniform(self):
+        """Diversity loss must produce non-zero gradient at uniform 0.5 init."""
+        scores = torch.ones(4, 5) * 0.5
+        scores.requires_grad_(True)
+        loss = diversity_loss(scores)
+        loss.backward()
+        assert scores.grad is not None
+        assert (scores.grad.abs() > 1e-6).any()
 
 
 class TestLoadBalanceLoss:

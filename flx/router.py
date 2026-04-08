@@ -124,29 +124,46 @@ class ThalamicRouter(nn.Module):
 
 
 def diversity_loss(domain_scores: Tensor) -> Tensor:
-    """Penalize routing collapse where all samples route to the same cortex(es).
+    """Penalize routing collapse — both score-to-zero bypass and all-to-same.
 
-    Measures batch-level cortex utilization uniformity. We want different
-    samples to prefer DIFFERENT cortices, producing specialization.
-    All samples → one cortex → loss ≈ 1.0 (collapsed).
-    Samples distributed across cortices → loss ≈ 0.0 (diverse).
+    Two complementary terms:
+
+    - **Spikiness**: Each sample's top cortex score should be high (near 1.0),
+      preventing the all-scores-to-zero collapse where the model bypasses
+      cortices via the merger's residual gate.  ``max()`` gradient flows to
+      the argmax element per sample — different samples naturally pick
+      different cortices, bootstrapping diversity.  Critically, this term
+      has **non-zero gradient even when all sigmoid outputs are uniform**
+      (~0.5), which the earlier entropy-only formulation lacked.
+
+    - **Spread**: Batch-level utilization across cortices should be uniform,
+      preventing all-to-one-cortex collapse.  Only activates once spikiness
+      has broken the uniform-sigmoid plateau.
 
     Args:
         domain_scores: [batch, num_cortices] activation scores in [0, 1].
 
     Returns:
-        Scalar diversity loss normalized to [0, 1].
+        Scalar diversity loss.  Near 0 when routing is diverse and confident;
+        near 2 when fully collapsed.
     """
     K = domain_scores.shape[1]
-    # Sharpen scores to get soft assignment (which cortex does each sample prefer?)
+
+    # Spikiness: push each sample's top cortex score toward 1.0.
+    # At init (all ~0.5): loss ≈ 0.5 with gradient −1/B on each sample's
+    # argmax element — the first signal that breaks the uniform plateau.
+    max_scores = domain_scores.max(dim=-1).values  # [batch]
+    spikiness = (1.0 - max_scores).mean()
+
+    # Spread: batch utilization entropy (Attempt 3 logic, still valid once
+    # spikiness has broken the uniform plateau and scores diverge).
     assignment = torch.softmax(domain_scores * 5.0, dim=-1)  # [batch, K]
-    # Average across batch: what fraction of the batch uses each cortex?
     utilization = assignment.mean(dim=0)  # [K]
-    # Entropy of utilization: high entropy = uniform usage = good
     entropy = -(utilization * (utilization + 1e-8).log()).sum()
     max_entropy = torch.tensor(float(K), device=domain_scores.device).log()
-    # Loss: 1 - normalized_entropy. Uniform → 0, collapsed → 1.
-    return 1.0 - entropy / (max_entropy + 1e-8)
+    spread = 1.0 - entropy / (max_entropy + 1e-8)
+
+    return spikiness + spread
 
 
 def load_balance_loss(domain_scores: Tensor, num_cortices: int) -> Tensor:
