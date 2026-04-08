@@ -117,6 +117,8 @@ def train_phase0(
     weight_decay: float = 0.01,
     patience: int = 3,
     checkpoint_dir: str | None = None,
+    checkpoint_every: int = 10_000,
+    max_steps: int = 0,
     device: str = "cpu",
     log_every: int = 100,
 ) -> list[dict[str, float]]:
@@ -138,6 +140,8 @@ def train_phase0(
         weight_decay: AdamW weight decay coefficient.
         patience: Early stop after N epochs without improvement on val loss.
         checkpoint_dir: If set, save per-epoch checkpoints here.
+        checkpoint_every: Save a checkpoint every N steps (default 10,000).
+        max_steps: Hard cap on total training steps (0 = no cap, use epochs).
         device: Training device.
         log_every: Log metrics every N steps.
 
@@ -162,6 +166,8 @@ def train_phase0(
 
     early_stop = EarlyStopState(patience=patience, mode="min")
     total_steps = num_epochs * len(dataloader)
+    if max_steps > 0:
+        total_steps = min(total_steps, max_steps)
     history = []
 
     step = 0
@@ -209,7 +215,22 @@ def train_phase0(
                     f"λ_bal={lambda_bal:.4f}"
                 )
 
+            if checkpoint_dir and checkpoint_every > 0 and step > 0 and step % checkpoint_every == 0:
+                save_checkpoint(
+                    model, f"{checkpoint_dir}/phase0_step{step}.pt", epoch,
+                    {
+                        "step": step,
+                        "avg_pred_loss": epoch_pred_sum / max(epoch_steps, 1),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "lambda_bal": lambda_bal,
+                    },
+                )
+
             step += 1
+
+            if max_steps > 0 and step >= max_steps:
+                print(f"Phase 0 | Reached max_steps={max_steps}, stopping.")
+                break
 
         # End of epoch — checkpoint + early stopping
         epoch_avg_pred = epoch_pred_sum / max(epoch_steps, 1)
@@ -229,6 +250,9 @@ def train_phase0(
 
         if early_stop.check(stop_metric, epoch, model):
             print(f"Phase 0 | Early stop at epoch {epoch} (patience={patience})")
+            break
+
+        if max_steps > 0 and step >= max_steps:
             break
 
     early_stop.restore_best(model)
