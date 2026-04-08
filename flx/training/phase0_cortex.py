@@ -11,6 +11,7 @@ After Phase 0, each cortex has a distinct "receptive field" for knowledge domain
 
 from __future__ import annotations
 
+import math
 import random
 from typing import Optional
 
@@ -119,6 +120,10 @@ def train_phase0(
     checkpoint_dir: str | None = None,
     checkpoint_every: int = 10_000,
     max_steps: int = 0,
+    resume_from_checkpoint: str | None = None,
+    warmup_steps: int = 500,
+    loss_spike_threshold: float = 3.0,
+    loss_spike_patience: int = 50,
     device: str = "cpu",
     log_every: int = 100,
     use_amp: bool = True,
@@ -133,7 +138,7 @@ def train_phase0(
         dataloader: Training data yielding (input_ids, targets) batches.
         val_dataloader: Validation data for early stopping. If None, uses train loss.
         num_epochs: Number of training epochs.
-        lr: Learning rate.
+        lr: Peak learning rate (after warmup).
         lambda_div: Diversity loss coefficient.
         lambda_bal_start: Initial load balance coefficient.
         lambda_bal_end: Final load balance coefficient.
@@ -143,6 +148,11 @@ def train_phase0(
         checkpoint_dir: If set, save per-epoch checkpoints here.
         checkpoint_every: Save a checkpoint every N steps (default 10,000).
         max_steps: Hard cap on total training steps (0 = no cap, use epochs).
+        resume_from_checkpoint: Path to a step checkpoint to resume from.
+        warmup_steps: Linear LR warmup steps before cosine decay.
+        loss_spike_threshold: Halt if pred_loss exceeds this multiple of the
+            running average (e.g. 3.0 = 3x the recent average).
+        loss_spike_patience: Number of consecutive spike steps before halting.
         device: Training device.
         log_every: Log metrics every N steps.
         use_amp: Enable automatic mixed precision (float16) for GPU training.
@@ -174,14 +184,47 @@ def train_phase0(
     total_steps = num_epochs * len(dataloader)
     if max_steps > 0:
         total_steps = min(total_steps, max_steps)
+
+    # Cosine LR schedule with linear warmup
+    def lr_lambda(current_step: int) -> float:
+        if current_step < warmup_steps:
+            return current_step / max(warmup_steps, 1)
+        progress = (current_step - warmup_steps) / max(total_steps - warmup_steps, 1)
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+    # Resume from checkpoint
+    start_step = 0
+    start_epoch = 0
+    if resume_from_checkpoint is not None:
+        ckpt = torch.load(resume_from_checkpoint, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model_state_dict"])
+        if "optimizer_state_dict" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        start_step = ckpt.get("step", 0)
+        start_epoch = ckpt.get("epoch", 0)
+        # Advance scheduler to the resumed step
+        for _ in range(start_step):
+            scheduler.step()
+        print(f"Phase 0 | Resumed from {resume_from_checkpoint} "
+              f"(epoch={start_epoch}, step={start_step})")
+
+    # Loss spike detection state
+    pred_loss_ema = 0.0
+    spike_counter = 0
     history = []
 
-    step = 0
-    for epoch in range(num_epochs):
+    step = start_step
+    for epoch in range(start_epoch, num_epochs):
         epoch_pred_sum = 0.0
         epoch_steps = 0
+        batches_to_skip = step - (start_step if epoch == start_epoch else 0)
 
-        for batch in dataloader:
+        for batch_idx, batch in enumerate(dataloader):
+            # Skip already-processed batches when resuming mid-epoch
+            if epoch == start_epoch and batch_idx < (start_step % len(dataloader)) and resume_from_checkpoint is not None:
+                continue
             input_ids = batch[0].to(device)
             targets = batch[1].to(device)
 
@@ -205,14 +248,48 @@ def train_phase0(
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(optimizer)
             scaler.update()
+            scheduler.step()
 
             record = {k: v.item() for k, v in losses.items()}
             record["lambda_bal"] = lambda_bal
+            record["lr"] = scheduler.get_last_lr()[0]
             record["epoch"] = epoch
             record["step"] = step
             history.append(record)
             epoch_pred_sum += record["pred_loss"]
             epoch_steps += 1
+
+            # Loss spike detection: track EMA and halt on sustained explosion
+            pred_val = record["pred_loss"]
+            if step == start_step:
+                pred_loss_ema = pred_val
+            else:
+                pred_loss_ema = 0.99 * pred_loss_ema + 0.01 * pred_val
+
+            if pred_loss_ema > 0 and pred_val > loss_spike_threshold * pred_loss_ema:
+                spike_counter += 1
+                if spike_counter >= loss_spike_patience:
+                    print(
+                        f"Phase 0 | HALT: loss spike detected at step {step} "
+                        f"(pred={pred_val:.4f}, ema={pred_loss_ema:.4f}, "
+                        f"ratio={pred_val / pred_loss_ema:.1f}x). "
+                        f"Saving emergency checkpoint."
+                    )
+                    if checkpoint_dir:
+                        save_checkpoint(
+                            model, f"{checkpoint_dir}/phase0_spike_step{step}.pt", epoch,
+                            {
+                                "step": step,
+                                "avg_pred_loss": epoch_pred_sum / max(epoch_steps, 1),
+                                "optimizer_state_dict": optimizer.state_dict(),
+                                "lambda_bal": lambda_bal,
+                                "spike_detected": True,
+                            },
+                        )
+                    early_stop.restore_best(model)
+                    return history
+            else:
+                spike_counter = 0
 
             if step % log_every == 0:
                 print(
