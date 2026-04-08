@@ -7,7 +7,7 @@ mymodel.flx/
 ├── shared_trunk/weights.bin
 ├── thalamic_router/weights.bin
 ├── cortices/{domain}/{stratum}/weights.bin + deltas/
-├── bridges/{src}_{tgt}.yaml + weights.bin
+├── bridges/{src}→{tgt}.yaml + weights.bin
 ├── state_hub/ (working_memory, episodes, thermal, activation history)
 ├── meta_generator/weights.bin
 └── thermal_estimator/weights.bin
@@ -140,7 +140,10 @@ def save_flx(
         bridges_dir = path / "bridges"
         bridges_dir.mkdir(exist_ok=True)
         for key, bridge in model.bridges.items():
+            # Use source→target as the key but filesystem-safe name for files
+            file_key = f"{bridge.source_cortex}_to_{bridge.target_cortex}"
             bridge_data = {
+                "key": key,
                 "source_cortex": bridge.source_cortex,
                 "target_cortex": bridge.target_cortex,
                 "tau_min": bridge.tau_min,
@@ -148,9 +151,9 @@ def save_flx(
                 "bandwidth": bridge.bandwidth.item(),
                 "compatibility": bridge.compatibility.item(),
             }
-            with open(bridges_dir / f"{key}.yaml", "w") as f:
+            with open(bridges_dir / f"{file_key}.yaml", "w") as f:
                 yaml.dump(bridge_data, f, default_flow_style=False)
-            torch.save(bridge.state_dict(), bridges_dir / f"{key}_weights.bin")
+            torch.save(bridge.state_dict(), bridges_dir / f"{file_key}_weights.bin")
 
     # --- Cortex Merger + Decoder ---
     torch.save(model.cortex_merger.state_dict(), path / "cortex_merger_weights.bin")
@@ -379,7 +382,9 @@ def load_flx(
     if manifest.get("has_bridges") and bridges_dir.exists():
         bridges = build_bridges(cortex_names, d_model=d_model)
         for key, bridge in bridges.items():
-            weights_path = bridges_dir / f"{key}_weights.bin"
+            # Filesystem-safe name: source_to_target
+            file_key = f"{bridge.source_cortex}_to_{bridge.target_cortex}"
+            weights_path = bridges_dir / f"{file_key}_weights.bin"
             if weights_path.exists():
                 bridge.load_state_dict(
                     torch.load(weights_path, map_location=device, weights_only=True)

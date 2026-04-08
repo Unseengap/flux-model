@@ -70,8 +70,8 @@ class TestBuildBridges:
     def test_bridge_keys_are_source_target(self):
         names = ["math", "code"]
         bridges = build_bridges(names, d_model=64)
-        assert "math_code" in bridges
-        assert "code_math" in bridges
+        assert "math→code" in bridges
+        assert "code→math" in bridges
 
     def test_bridges_are_modules(self):
         names = ["math", "code"]

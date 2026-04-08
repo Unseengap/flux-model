@@ -138,13 +138,12 @@ class DeltaStack(nn.Module):
         Returns the sum of delta contributions: Σ delta_i(x).
         This is added to the base layer's output.
         """
-        out = torch.zeros_like(x[..., : self.deltas[0].d_out]) if len(self.deltas) > 0 else None
-        for delta in self.active_deltas(tau):
-            contribution = delta(x)
-            if out is None:
-                out = contribution
-            else:
-                out = out + contribution
+        active = self.active_deltas(tau)
+        if not active:
+            return None
+        out = torch.zeros_like(x)
+        for delta in active:
+            out = out + delta(x)
         return out
 
     def consolidate(self, base_weight: Tensor, tau: float = 0.0) -> Tensor:

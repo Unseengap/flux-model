@@ -90,7 +90,12 @@ class Stratum(nn.Module):
         if tau < self.tau_min:
             return torch.zeros_like(x)
 
-        out = self.layers(x)
+        seq_len = x.shape[1]
+        causal_mask = torch.triu(
+            torch.full((seq_len, seq_len), float("-inf"), device=x.device),
+            diagonal=1,
+        )
+        out = self.layers(x, mask=causal_mask)
 
         # Add delta contributions
         if len(self.delta_stack) > 0:
@@ -165,6 +170,14 @@ class SharedTrunk(nn.Module):
         nn.init.normal_(self.token_embedding.weight, std=0.02)
         nn.init.normal_(self.position_embedding.weight, std=0.02)
 
+    @staticmethod
+    def _causal_mask(seq_len: int, device: torch.device) -> Tensor:
+        """Create an upper-triangular causal mask for autoregressive attention."""
+        return torch.triu(
+            torch.full((seq_len, seq_len), float("-inf"), device=device),
+            diagonal=1,
+        )
+
     def forward(self, input_ids: Tensor) -> Tensor:
         """Process input tokens through embedder + shared trunk layers.
 
@@ -186,8 +199,9 @@ class SharedTrunk(nn.Module):
         # Canonize
         x = self.canonizer(x)
 
-        # Shared trunk (basic stratum)
-        x = self.trunk_layers(x)
+        # Shared trunk (basic stratum) — causal mask for autoregressive generation
+        causal_mask = self._causal_mask(seq_len, x.device)
+        x = self.trunk_layers(x, mask=causal_mask)
 
         return x
 
@@ -395,7 +409,7 @@ class FLXNano(nn.Module):
         layers_per_stratum: int = 2,
         cortex_names: list[str] | None = None,
         delta_rank: int = 32,
-        delta_capacity: int = 3,
+        delta_capacity: int = 8,
         max_seq_len: int = 2048,
         dim_feedforward: int = 2048,
         dropout: float = 0.1,
@@ -547,8 +561,8 @@ class FLXNano(nn.Module):
 
         active_names = list(cortex_outputs.keys())
         for bridge_key, bridge in self.bridges.items():
-            # Bridge keys are "source_target"
-            parts = bridge_key.split("_", 1)
+            # Bridge keys use → delimiter: "source→target"
+            parts = bridge_key.split("→")
             if len(parts) != 2:
                 continue
             source, target = parts

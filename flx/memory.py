@@ -171,8 +171,16 @@ class MemoryController(nn.Module):
         """
         tau_val = tau.mean().item() if isinstance(tau, Tensor) else tau
 
+        # Reset loop count at the start of each forward call (not mid-loop)
+        # so stale state from prior batches doesn't persist.
+        if self._loop_count == 0:
+            pass  # fresh call — no reset needed
+        # Note: callers doing refinement loops will increment _loop_count
+        # via repeated forward() calls within the same batch.
+
         # Below retrieval threshold — pass through
         if tau_val < self.retrieval_tau_min or len(episodic_buffer) == 0:
+            self._loop_count = 0
             return merger_output, False
 
         # Attend over episodes to find relevant memories

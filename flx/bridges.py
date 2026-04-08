@@ -86,7 +86,7 @@ def build_bridges(
         for j, tgt in enumerate(cortex_names):
             if i < j:
                 # Forward bridge
-                key_fwd = f"{src}_{tgt}"
+                key_fwd = f"{src}→{tgt}"
                 bridges[key_fwd] = CrossCorticalBridge(
                     d_model=d_model,
                     source_cortex=src,
@@ -94,7 +94,7 @@ def build_bridges(
                     tau_min=tau_min,
                 )
                 # Reverse bridge
-                key_rev = f"{tgt}_{src}"
+                key_rev = f"{tgt}→{src}"
                 bridges[key_rev] = CrossCorticalBridge(
                     d_model=d_model,
                     source_cortex=tgt,

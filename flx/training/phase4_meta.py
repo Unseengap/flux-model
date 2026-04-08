@@ -152,14 +152,16 @@ def phase4_training_step(
 
     model.train()
 
-    # 8. Meta-loss: train meta-gen to produce better deltas
+    # 8. Meta-loss: train meta-gen to produce better deltas (REINFORCE-style)
     # Re-run forward through meta-gen (with gradients this time)
     A_grad, B_grad, metadata_grad = meta_gen(err_tensor)
 
-    # The meta-loss encourages deltas that reduce prediction loss
-    # Use the composed delta contribution as a proxy
-    delta_norm = (A_grad[0].norm() + B_grad[0].norm()) * 0.001
-    meta_loss = -improvement.detach() * delta_norm + delta_norm  # regularize
+    # The delta contribution has gradient w.r.t. meta-gen parameters.
+    # Use improvement as the reward signal (REINFORCE).
+    delta_contribution = A_grad[0].norm() + B_grad[0].norm()
+    reward = improvement.detach()
+    reg_weight = 0.001
+    meta_loss = -reward * delta_contribution + reg_weight * delta_contribution
 
     return {
         "meta_loss": meta_loss,
