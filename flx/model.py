@@ -77,6 +77,19 @@ class Stratum(nn.Module):
         self.layers = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.delta_stack = DeltaStack(capacity=delta_capacity)
 
+    def _get_causal_mask(self, seq_len: int, device: torch.device) -> Tensor:
+        """Return a cached causal mask, regenerating only on size/device change."""
+        if (
+            not hasattr(self, "_causal_mask_cache")
+            or self._causal_mask_cache.shape[0] != seq_len
+            or self._causal_mask_cache.device != device
+        ):
+            self._causal_mask_cache = torch.triu(
+                torch.full((seq_len, seq_len), float("-inf"), device=device),
+                diagonal=1,
+            )
+        return self._causal_mask_cache
+
     def forward(self, x: Tensor, tau: float) -> Tensor:
         """Forward pass through stratum layers + delta contributions.
 
@@ -90,11 +103,7 @@ class Stratum(nn.Module):
         if tau < self.tau_min:
             return torch.zeros_like(x)
 
-        seq_len = x.shape[1]
-        causal_mask = torch.triu(
-            torch.full((seq_len, seq_len), float("-inf"), device=x.device),
-            diagonal=1,
-        )
+        causal_mask = self._get_causal_mask(x.shape[1], x.device)
         out = self.layers(x, mask=causal_mask)
 
         # Add delta contributions
@@ -171,12 +180,15 @@ class SharedTrunk(nn.Module):
         nn.init.normal_(self.position_embedding.weight, std=0.02)
 
     @staticmethod
-    def _causal_mask(seq_len: int, device: torch.device) -> Tensor:
-        """Create an upper-triangular causal mask for autoregressive attention."""
-        return torch.triu(
-            torch.full((seq_len, seq_len), float("-inf"), device=device),
-            diagonal=1,
-        )
+    def _causal_mask(seq_len: int, device: torch.device, _cache: dict = {}) -> Tensor:
+        """Create a cached upper-triangular causal mask for autoregressive attention."""
+        key = (seq_len, device)
+        if key not in _cache:
+            _cache[key] = torch.triu(
+                torch.full((seq_len, seq_len), float("-inf"), device=device),
+                diagonal=1,
+            )
+        return _cache[key]
 
     def forward(self, input_ids: Tensor) -> Tensor:
         """Process input tokens through embedder + shared trunk layers.

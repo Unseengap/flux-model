@@ -6,6 +6,8 @@ with max aggregation (see spec 10 — reality checks).
 
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -61,27 +63,7 @@ class ThalamicRouter(nn.Module):
             Dict mapping cortex names to scores: {name: [batch] tensor}.
             Only cortices above activation_threshold are included.
         """
-        batch_size, seq_len, d_model = embedded_input.shape
-
-        # Segment into chunks
-        if seq_len <= self.chunk_size:
-            chunks = [embedded_input]
-        else:
-            chunks = []
-            for start in range(0, seq_len, self.chunk_size):
-                end = min(start + self.chunk_size, seq_len)
-                chunks.append(embedded_input[:, start:end, :])
-
-        # Score each chunk independently
-        chunk_scores = []
-        for chunk in chunks:
-            chunk_mean = chunk.mean(dim=1)  # [batch, d_model]
-            scores = torch.sigmoid(self.domain_classifier(chunk_mean))  # [batch, num_cortices]
-            chunk_scores.append(scores)
-
-        # Max aggregation: sequence needs every cortex that any chunk needs
-        all_scores = torch.stack(chunk_scores, dim=0)  # [num_chunks, batch, num_cortices]
-        sequence_scores = all_scores.max(dim=0).values  # [batch, num_cortices]
+        sequence_scores = self.forward_raw(embedded_input)  # [batch, num_cortices]
 
         # Build output dict with only active cortices
         result = {}
@@ -104,22 +86,31 @@ class ThalamicRouter(nn.Module):
         batch_size, seq_len, d_model = embedded_input.shape
 
         if seq_len <= self.chunk_size:
-            chunks = [embedded_input]
+            # Single chunk — fast path, no padding/reshaping needed
+            chunk_mean = embedded_input.mean(dim=1)  # [batch, d_model]
+            return torch.sigmoid(self.domain_classifier(chunk_mean))
+
+        # Pad to even multiple of chunk_size, reshape, batch through classifier
+        num_chunks = (seq_len + self.chunk_size - 1) // self.chunk_size
+        padded_len = num_chunks * self.chunk_size
+        if padded_len > seq_len:
+            padding = embedded_input.new_zeros(batch_size, padded_len - seq_len, d_model)
+            padded = torch.cat([embedded_input, padding], dim=1)
         else:
-            chunks = []
-            for start in range(0, seq_len, self.chunk_size):
-                end = min(start + self.chunk_size, seq_len)
-                chunks.append(embedded_input[:, start:end, :])
+            padded = embedded_input
 
-        chunk_scores = []
-        for chunk in chunks:
-            chunk_mean = chunk.mean(dim=1)
-            scores = torch.sigmoid(self.domain_classifier(chunk_mean))
-            chunk_scores.append(scores)
+        # [batch, num_chunks, chunk_size, d_model]
+        chunks = padded.view(batch_size, num_chunks, self.chunk_size, d_model)
+        chunk_means = chunks.mean(dim=2)  # [batch, num_chunks, d_model]
 
-        all_scores = torch.stack(chunk_scores, dim=0)
-        sequence_scores = all_scores.max(dim=0).values
+        # Batch all chunks through classifier at once
+        # Reshape to [batch * num_chunks, d_model], run classifier, reshape back
+        flat_means = chunk_means.reshape(batch_size * num_chunks, d_model)
+        flat_scores = torch.sigmoid(self.domain_classifier(flat_means))
+        all_scores = flat_scores.view(batch_size, num_chunks, self.num_cortices)
 
+        # Max aggregation across chunks
+        sequence_scores = all_scores.max(dim=1).values  # [batch, num_cortices]
         return sequence_scores
 
 
@@ -159,8 +150,9 @@ def diversity_loss(domain_scores: Tensor) -> Tensor:
     # spikiness has broken the uniform plateau and scores diverge).
     assignment = torch.softmax(domain_scores * 5.0, dim=-1)  # [batch, K]
     utilization = assignment.mean(dim=0)  # [K]
-    entropy = -(utilization * (utilization + 1e-8).log()).sum()
-    max_entropy = torch.tensor(float(K), device=domain_scores.device).log()
+    log_util = (utilization + 1e-8).log()
+    entropy = -(utilization * log_util).sum()
+    max_entropy = math.log(K)
     spread = 1.0 - entropy / (max_entropy + 1e-8)
 
     return spikiness + spread

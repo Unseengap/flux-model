@@ -121,6 +121,7 @@ def train_phase0(
     max_steps: int = 0,
     device: str = "cpu",
     log_every: int = 100,
+    use_amp: bool = True,
 ) -> list[dict[str, float]]:
     """Full Phase 0 training loop.
 
@@ -144,6 +145,7 @@ def train_phase0(
         max_steps: Hard cap on total training steps (0 = no cap, use epochs).
         device: Training device.
         log_every: Log metrics every N steps.
+        use_amp: Enable automatic mixed precision (float16) for GPU training.
 
     Returns:
         List of per-step loss dicts.
@@ -164,6 +166,10 @@ def train_phase0(
         weight_decay=weight_decay,
     )
 
+    # Mixed precision: only use on CUDA devices
+    amp_enabled = use_amp and device != "cpu" and torch.cuda.is_available()
+    scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
+
     early_stop = EarlyStopState(patience=patience, mode="min")
     total_steps = num_epochs * len(dataloader)
     if max_steps > 0:
@@ -183,19 +189,22 @@ def train_phase0(
             progress = step / max(total_steps - 1, 1)
             lambda_bal = lambda_bal_start + (lambda_bal_end - lambda_bal_start) * progress
 
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
 
-            losses = phase0_training_step(
-                model, input_ids, targets,
-                tau=0.5,
-                lambda_div=lambda_div,
-                lambda_bal=lambda_bal,
-                dropout_top_prob=dropout_top_prob,
-            )
+            with torch.amp.autocast("cuda", enabled=amp_enabled):
+                losses = phase0_training_step(
+                    model, input_ids, targets,
+                    tau=0.5,
+                    lambda_div=lambda_div,
+                    lambda_bal=lambda_bal,
+                    dropout_top_prob=dropout_top_prob,
+                )
 
-            losses["total_loss"].backward()
+            scaler.scale(losses["total_loss"]).backward()
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
 
             record = {k: v.item() for k, v in losses.items()}
             record["lambda_bal"] = lambda_bal
