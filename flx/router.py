@@ -124,14 +124,12 @@ class ThalamicRouter(nn.Module):
 
 
 def diversity_loss(domain_scores: Tensor) -> Tensor:
-    """Penalize uniform routing — encourage each sample to prefer specific cortices.
+    """Penalize routing collapse where all samples route to the same cortex(es).
 
-    Uses entropy of per-sample routing distribution as a sharpness penalty.
-    Uniform scores (all cortices equal) → max entropy → loss ≈ 1.0.
-    Spiky scores (one cortex dominates) → low entropy → loss ≈ 0.0.
-
-    Combined with load_balance_loss, this forces different samples to prefer
-    different cortices — producing cortex specialization.
+    Measures batch-level cortex utilization uniformity. We want different
+    samples to prefer DIFFERENT cortices, producing specialization.
+    All samples → one cortex → loss ≈ 1.0 (collapsed).
+    Samples distributed across cortices → loss ≈ 0.0 (diverse).
 
     Args:
         domain_scores: [batch, num_cortices] activation scores in [0, 1].
@@ -140,13 +138,15 @@ def diversity_loss(domain_scores: Tensor) -> Tensor:
         Scalar diversity loss normalized to [0, 1].
     """
     K = domain_scores.shape[1]
-    # Normalize to per-sample probability distribution
-    probs = domain_scores / (domain_scores.sum(dim=-1, keepdim=True) + 1e-8)
-    # Per-sample entropy (high = uniform = bad)
-    entropy = -(probs * (probs + 1e-8).log()).sum(dim=-1)  # [batch]
-    # Normalize by max possible entropy: log(K)
+    # Sharpen scores to get soft assignment (which cortex does each sample prefer?)
+    assignment = torch.softmax(domain_scores * 5.0, dim=-1)  # [batch, K]
+    # Average across batch: what fraction of the batch uses each cortex?
+    utilization = assignment.mean(dim=0)  # [K]
+    # Entropy of utilization: high entropy = uniform usage = good
+    entropy = -(utilization * (utilization + 1e-8).log()).sum()
     max_entropy = torch.tensor(float(K), device=domain_scores.device).log()
-    return (entropy / (max_entropy + 1e-8)).mean()
+    # Loss: 1 - normalized_entropy. Uniform → 0, collapsed → 1.
+    return 1.0 - entropy / (max_entropy + 1e-8)
 
 
 def load_balance_loss(domain_scores: Tensor, num_cortices: int) -> Tensor:

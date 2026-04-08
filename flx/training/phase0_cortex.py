@@ -63,17 +63,17 @@ def phase0_training_step(
         domain_scores_gated[:, top_cortex] = 0.0
 
     # 4. Build domain_scores dict for forward
+    #    Phase 0: activate ALL cortices so they all receive gradients.
+    #    Threshold-based gating is for inference; during specialization
+    #    training every cortex must see data to differentiate.
     domain_scores = {}
     for i, name in enumerate(model.cortex_names):
-        score = domain_scores_gated[:, i]
-        if (score > 0.2).any():
-            domain_scores[name] = score
+        domain_scores[name] = domain_scores_gated[:, i]
 
-    # 5. Forward through active cortices
+    # 5. Forward through ALL cortices (no threshold during Phase 0)
     cortex_outputs = {}
     for name, cortex in model.cortices.items():
-        if name in domain_scores:
-            cortex_outputs[name] = cortex(trunk_output, tau)
+        cortex_outputs[name] = cortex(trunk_output, tau)
 
     # 6. Merge and decode
     merged = model.cortex_merger(cortex_outputs, domain_scores, trunk_output)

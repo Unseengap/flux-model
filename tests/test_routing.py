@@ -39,17 +39,25 @@ class TestThalamicRouter:
 
 
 class TestDiversityLoss:
-    def test_identical_scores_high_loss(self):
-        """All cortices activating equally → high diversity loss."""
-        scores = torch.ones(32, 5) * 0.8
+    def test_collapsed_routing_high_loss(self):
+        """All samples routing to the same cortex → high diversity loss."""
+        scores = torch.zeros(32, 5)
+        scores[:, 0] = 1.0  # every sample → cortex 0
         loss = diversity_loss(scores)
-        assert loss.item() > 0.9  # uniform scores → near-max entropy
+        assert loss.item() > 0.9  # collapsed → near-max loss
 
-    def test_orthogonal_scores_low_loss(self):
-        """Each cortex activating on different inputs → low diversity loss."""
-        scores = torch.eye(5).repeat(1, 1)  # 5 inputs, 5 cortices
+    def test_spread_routing_low_loss(self):
+        """Different samples routing to different cortices → low diversity loss."""
+        # 5 groups of samples, each preferring a different cortex
+        scores = torch.eye(5).repeat(6, 1)  # 30 samples, evenly spread
         loss = diversity_loss(scores)
-        assert loss.item() < 0.1
+        assert loss.item() < 0.1  # diverse usage → near-zero loss
+
+    def test_uniform_scores_low_loss(self):
+        """All cortices activating equally → batch utilization is uniform → low loss."""
+        scores = torch.ones(32, 5) * 0.5
+        loss = diversity_loss(scores)
+        assert loss.item() < 0.05  # uniform → utilization is balanced
 
 
 class TestLoadBalanceLoss:
