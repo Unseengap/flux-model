@@ -15,7 +15,7 @@ from flx.bridges import build_bridges
 from flx.memory import EpisodicCompressor, MemoryController
 from flx.meta_gen import MetaDeltaGenerator
 from flx.training.phase0_cortex import phase0_training_step
-from flx.training.phase1_delta import phase1_training_step, _init_delta_pool
+from flx.training.phase1_delta import phase1_training_step, train_phase1, _init_delta_pool
 from flx.training.phase2_thermal import phase2_training_step
 from flx.training.phase3_memory import phase3_training_step
 from flx.training.phase4_meta import phase4_training_step, ErrorBuffer
@@ -147,6 +147,36 @@ class TestPhase1Smoke:
         for tau in [0.1, 0.5, 0.9]:
             losses = phase1_training_step(model, ids, tgt, tau=tau)
             assert losses["pred_loss"].isfinite()
+
+    def test_amp_step(self):
+        """Phase 1 step works under AMP autocast (CPU fallback)."""
+        model = _tiny_model()
+        _init_delta_pool(model, pool_size=2)
+        model.train()
+
+        ids, tgt = _random_batch()
+        with torch.amp.autocast("cpu", enabled=True):
+            losses = phase1_training_step(model, ids, tgt, tau=0.5)
+        assert losses["pred_loss"].isfinite()
+
+    def test_max_steps(self):
+        """train_phase1 respects max_steps cap."""
+        model = _tiny_model()
+        router = ThalamicRouter(d_model=D_MODEL, cortex_names=model.cortex_names)
+        model.attach_router(router)
+
+        dataset = torch.utils.data.TensorDataset(
+            torch.randint(0, VOCAB, (20, SEQ_LEN)),
+            torch.randint(0, VOCAB, (20, SEQ_LEN)),
+        )
+        loader = torch.utils.data.DataLoader(dataset, batch_size=BATCH)
+
+        history = train_phase1(
+            model, loader,
+            num_epochs=10, max_steps=5,
+            log_every=999, use_amp=False,
+        )
+        assert len(history) == 5
 
 
 # ---------------------------------------------------------------------------

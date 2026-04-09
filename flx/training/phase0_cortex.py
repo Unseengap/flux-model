@@ -204,9 +204,10 @@ def train_phase0(
             optimizer.load_state_dict(ckpt["optimizer_state_dict"])
         start_step = ckpt.get("step", 0)
         start_epoch = ckpt.get("epoch", 0)
-        # Advance scheduler to the resumed step
-        for _ in range(start_step):
-            scheduler.step()
+        # Advance scheduler to the resumed step (suppress ordering warning)
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer, lr_lambda, last_epoch=start_step
+        )
         print(f"Phase 0 | Resumed from {resume_from_checkpoint} "
               f"(epoch={start_epoch}, step={start_step})")
 
