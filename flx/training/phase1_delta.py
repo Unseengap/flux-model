@@ -163,11 +163,11 @@ def train_phase1(
     Returns:
         List of per-step loss dicts.
     """
-    model = model.to(device)
     model.train()
 
-    # Initialize delta pools
+    # Initialize delta pools BEFORE moving to device so all params land on GPU together
     _init_delta_pool(model, pool_size=delta_pool_size)
+    model = model.to(device)
 
     # Freeze router
     if model.thalamic_router is not None:
