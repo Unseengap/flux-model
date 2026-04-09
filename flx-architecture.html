@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FLX Architecture Explorer</title>
+<title>FLX-Nano Architecture Explorer</title>
 <style>
   :root {
     --bg: #0d1117;
@@ -12,893 +12,718 @@
     --text: #e6edf3;
     --text-dim: #8b949e;
     --accent: #58a6ff;
-    --green: #3fb950;
-    --orange: #d29922;
-    --red: #f85149;
-    --purple: #bc8cff;
-    --cyan: #39d2c0;
-    --pink: #f778ba;
+    --accent2: #f78166;
+    --accent3: #7ee787;
+    --accent4: #d2a8ff;
+    --accent5: #ff7b72;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
     background: var(--bg);
     color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
     overflow-x: hidden;
   }
   header {
-    padding: 20px 32px;
+    padding: 20px 28px;
     border-bottom: 1px solid var(--border);
     display: flex;
-    align-items: center;
     justify-content: space-between;
-    background: var(--surface);
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 14px;
   }
   header h1 { font-size: 20px; font-weight: 600; }
   header h1 span { color: var(--accent); }
+  .badge {
+    display: inline-block;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2px 10px;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-left: 6px;
+  }
   .tau-control {
     display: flex;
     align-items: center;
     gap: 12px;
-    background: var(--bg);
-    padding: 8px 16px;
-    border-radius: 8px;
+    background: var(--surface);
+    padding: 10px 16px;
+    border-radius: 10px;
     border: 1px solid var(--border);
   }
   .tau-control label { font-size: 13px; color: var(--text-dim); }
   .tau-control .tau-val {
-    font-size: 18px;
-    font-weight: 700;
-    min-width: 48px;
-    text-align: center;
     font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 20px;
+    font-weight: 700;
+    min-width: 50px;
+    text-align: right;
+    transition: color 0.3s;
   }
   input[type=range] {
     -webkit-appearance: none;
-    width: 200px;
+    width: 180px;
     height: 6px;
     border-radius: 3px;
     outline: none;
     cursor: pointer;
+    background: linear-gradient(to right, #58a6ff, #f85149);
   }
   input[type=range]::-webkit-slider-thumb {
     -webkit-appearance: none;
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: var(--accent);
+    background: #e6edf3;
     cursor: pointer;
     border: 2px solid var(--bg);
   }
-  .tau-regime {
-    font-size: 11px;
-    padding: 3px 8px;
-    border-radius: 4px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  .regime-fast { background: #3fb95033; color: var(--green); }
-  .regime-standard { background: #58a6ff33; color: var(--accent); }
-  .regime-deep { background: #d2992233; color: var(--orange); }
-  .regime-full { background: #f8514933; color: var(--red); }
-
-  .main-layout {
+  .legend {
     display: flex;
-    height: calc(100vh - 65px);
-  }
-
-  /* Pipeline column */
-  .pipeline {
-    flex: 1;
-    padding: 24px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0;
-    position: relative;
-  }
-
-  .flow-arrow {
-    width: 2px;
-    height: 20px;
-    background: var(--border);
-    position: relative;
-  }
-  .flow-arrow::after {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 6px solid var(--border);
-  }
-  .flow-arrow.active { background: var(--accent); }
-  .flow-arrow.active::after { border-top-color: var(--accent); }
-
-  .node {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 14px 20px;
-    cursor: pointer;
-    transition: all 0.25s ease;
-    text-align: center;
-    min-width: 180px;
-    position: relative;
-  }
-  .node:hover { border-color: var(--accent); transform: translateY(-1px); }
-  .node.selected { border-color: var(--accent); box-shadow: 0 0 20px #58a6ff22; }
-  .node.inactive { opacity: 0.3; }
-  .node.active-glow { border-color: var(--green); box-shadow: 0 0 12px #3fb95033; }
-  .node .node-label {
-    font-weight: 600;
-    font-size: 14px;
-  }
-  .node .node-sub {
-    font-size: 11px;
-    color: var(--text-dim);
-    margin-top: 2px;
-  }
-  .node .node-badge {
-    position: absolute;
-    top: -8px;
-    right: -8px;
-    font-size: 10px;
-    padding: 2px 6px;
-    border-radius: 8px;
-    font-weight: 600;
-  }
-
-  /* Cortex row */
-  .cortex-row {
-    display: flex;
-    gap: 10px;
+    gap: 16px;
     flex-wrap: wrap;
-    justify-content: center;
-    max-width: 720px;
-  }
-  .cortex-node {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 10px 14px;
-    cursor: pointer;
-    transition: all 0.25s ease;
-    text-align: center;
-    min-width: 110px;
-    position: relative;
-  }
-  .cortex-node:hover { border-color: var(--purple); transform: translateY(-1px); }
-  .cortex-node.selected { border-color: var(--purple); box-shadow: 0 0 16px #bc8cff22; }
-  .cortex-node.inactive { opacity: 0.25; }
-  .cortex-node .cortex-name { font-weight: 600; font-size: 13px; }
-  .cortex-node .cortex-score {
+    padding: 10px 28px;
     font-size: 11px;
     color: var(--text-dim);
-    font-family: 'SF Mono', 'Fira Code', monospace;
+    border-bottom: 1px solid var(--border);
   }
-  .strata-bar {
-    display: flex;
-    gap: 2px;
-    margin-top: 6px;
-    height: 6px;
-    border-radius: 3px;
-    overflow: hidden;
-  }
-  .strata-bar .s {
-    flex: 1;
+  .legend span { display: flex; align-items: center; gap: 5px; }
+  .legend i {
+    width: 16px;
+    height: 3px;
     border-radius: 2px;
-    transition: opacity 0.3s;
+    display: inline-block;
   }
-  .s-basic { background: var(--green); }
-  .s-intermediate { background: var(--accent); }
-  .s-expert { background: var(--orange); }
-  .s-frontier { background: var(--red); }
-
-  /* Bridge indicator */
-  .bridge-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 16px;
-    border-radius: 6px;
-    border: 1px dashed var(--border);
-    font-size: 12px;
-    color: var(--text-dim);
-    transition: all 0.3s;
-  }
-  .bridge-row.active-bridge {
-    border-color: var(--cyan);
-    color: var(--cyan);
-    background: #39d2c011;
-  }
-  .bridge-row.inactive { opacity: 0.2; }
-
-  /* Detail panel */
-  .detail-panel {
-    width: 380px;
-    border-left: 1px solid var(--border);
-    background: var(--surface);
-    padding: 24px;
-    overflow-y: auto;
-  }
-  .detail-panel h2 {
-    font-size: 16px;
-    margin-bottom: 4px;
-  }
-  .detail-panel .detail-type {
-    font-size: 11px;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 16px;
-  }
-  .detail-panel p {
-    font-size: 13px;
-    line-height: 1.6;
-    color: var(--text-dim);
-    margin-bottom: 12px;
-  }
-  .detail-section {
-    margin-top: 16px;
-    padding-top: 16px;
-    border-top: 1px solid var(--border);
-  }
-  .detail-section h3 {
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--text-dim);
-    margin-bottom: 8px;
-  }
-  .stat-grid {
+  .main-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    grid-template-columns: 1fr 340px;
+    min-height: calc(100vh - 90px);
   }
-  .stat-card {
-    background: var(--bg);
-    border-radius: 6px;
-    padding: 10px;
+  .canvas-area { padding: 20px; overflow: auto; }
+  .detail-panel {
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    padding: 22px;
+    overflow-y: auto;
+    max-height: calc(100vh - 90px);
   }
-  .stat-card .stat-val {
-    font-size: 18px;
-    font-weight: 700;
-    font-family: 'SF Mono', 'Fira Code', monospace;
-  }
-  .stat-card .stat-label {
-    font-size: 10px;
+  .detail-panel h2 { font-size: 16px; margin-bottom: 4px; color: var(--accent); }
+  .detail-panel h3 {
+    font-size: 12px;
     color: var(--text-dim);
     text-transform: uppercase;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.5px;
+    margin-top: 16px;
+    margin-bottom: 6px;
   }
-  .strata-detail {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .stratum-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 8px;
-    border-radius: 6px;
-    background: var(--bg);
-    font-size: 12px;
-    transition: opacity 0.3s;
-  }
-  .stratum-row.stratum-inactive { opacity: 0.25; }
-  .stratum-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  .stratum-name { flex: 1; font-weight: 500; }
-  .stratum-meta {
+  .detail-panel p, .detail-panel li { font-size: 13px; line-height: 1.65; }
+  .detail-panel ul { padding-left: 18px; }
+  .detail-panel .param-count {
     font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 10px;
-    color: var(--text-dim);
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--accent3);
   }
-
-  /* Thermal bar */
-  .thermal-strip {
-    height: 4px;
-    background: linear-gradient(90deg, var(--green), var(--accent), var(--orange), var(--red));
-    border-radius: 2px;
-    margin-top: 4px;
-    position: relative;
-  }
-  .thermal-strip .marker {
-    position: absolute;
-    top: -4px;
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: white;
-    border: 2px solid var(--bg);
-    transform: translateX(-50%);
-    transition: left 0.3s;
-  }
-
   .tag {
     display: inline-block;
-    font-size: 10px;
-    padding: 2px 6px;
-    border-radius: 4px;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    color: var(--text-dim);
-    margin: 2px;
-  }
-
-  .section-label {
-    font-size: 10px;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin: 4px 0;
-  }
-
-  .placeholder-detail {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    color: var(--text-dim);
-    text-align: center;
-    gap: 8px;
-  }
-  .placeholder-detail .hint { font-size: 13px; }
-  .placeholder-detail .icon { font-size: 36px; opacity: 0.3; }
-
-  /* Param table */
-  .param-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-    margin-top: 8px;
-  }
-  .param-table td {
-    padding: 4px 0;
-    border-bottom: 1px solid #30363d44;
-  }
-  .param-table td:last-child {
-    text-align: right;
-    font-family: 'SF Mono', 'Fira Code', monospace;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 11px;
+    margin-right: 4px;
+    margin-bottom: 4px;
+    background: rgba(88,166,255,0.12);
     color: var(--accent);
   }
-
-  /* Loop indicator */
-  .loop-indicator {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    color: var(--text-dim);
-    padding: 4px 10px;
-    border-radius: 20px;
-    border: 1px solid var(--border);
-    transition: all 0.3s;
+  .tag.hot { background: rgba(248,81,73,0.12); color: var(--accent5); }
+  .tag.green { background: rgba(126,231,135,0.12); color: var(--accent3); }
+  .tag.purple { background: rgba(210,168,255,0.12); color: var(--accent4); }
+  .tag.yellow { background: rgba(227,179,65,0.12); color: #e3b341; }
+  .param-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  .param-table th, .param-table td {
+    text-align: left;
+    font-size: 12px;
+    padding: 5px 8px;
+    border-bottom: 1px solid var(--border);
   }
-  .loop-indicator.loop-active {
-    color: var(--pink);
-    border-color: var(--pink);
-    background: #f778ba11;
-  }
-  .loop-indicator .loop-icon { font-size: 14px; }
+  .param-table th { color: var(--text-dim); font-weight: 500; }
+  .param-table td:last-child { text-align: right; font-family: monospace; }
 
-  .nano-badge {
-    font-size: 11px;
-    padding: 3px 8px;
-    border-radius: 4px;
-    background: var(--accent);
-    color: var(--bg);
-    font-weight: 700;
-    margin-left: 8px;
+  /* Training phases */
+  .phase-list { list-style: none; padding: 0; margin-top: 8px; }
+  .phase-list li {
+    padding: 8px 10px;
+    border-left: 3px solid var(--border);
+    margin-bottom: 6px;
+    font-size: 12px;
+    line-height: 1.5;
+    background: rgba(255,255,255,0.02);
+    border-radius: 0 6px 6px 0;
+  }
+  .phase-list li strong { color: var(--accent); }
+  .phase-list li.p0 { border-color: #58a6ff; }
+  .phase-list li.p1 { border-color: #f78166; }
+  .phase-list li.p2 { border-color: #f85149; }
+  .phase-list li.p3 { border-color: #7ee787; }
+  .phase-list li.p4 { border-color: #d2a8ff; }
+
+  /* SVG */
+  svg { display: block; margin: 0 auto; }
+  .node { cursor: pointer; transition: filter 0.15s; }
+  .node:hover { filter: brightness(1.2); }
+  .node rect {
+    rx: 8; ry: 8;
+    stroke-width: 1.5;
+    transition: stroke 0.2s, opacity 0.3s;
+  }
+  .node text {
+    fill: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-size: 12px;
+    text-anchor: middle;
+    pointer-events: none;
+  }
+  .node .sub { fill: var(--text-dim); font-size: 9.5px; }
+  .arrow {
+    stroke: #484f58;
+    stroke-width: 1.5;
+    fill: none;
+    marker-end: url(#ah);
+  }
+  .arrow.on { stroke: var(--accent); stroke-width: 2; }
+  .arrow.bridge {
+    stroke: var(--accent4);
+    stroke-dasharray: 5 3;
+    opacity: 0;
+    transition: opacity 0.4s;
+  }
+  .arrow.bridge.vis { opacity: 0.65; }
+  .arrow.loop {
+    stroke: var(--accent2);
+    stroke-dasharray: 5 3;
+    opacity: 0;
+    transition: opacity 0.4s;
+  }
+  .arrow.loop.vis { opacity: 0.7; }
+  .strata-bar { transition: opacity 0.35s; }
+  .sel-ring { stroke: var(--accent) !important; stroke-width: 2.5 !important; }
+
+  @media (max-width: 900px) {
+    .main-grid { grid-template-columns: 1fr; }
+    .detail-panel { border-left: 0; border-top: 1px solid var(--border); max-height: none; }
   }
 </style>
 </head>
 <body>
 
 <header>
-  <h1><span>FLX</span> Architecture Explorer <span class="nano-badge">Nano ~145M</span></h1>
+  <div>
+    <h1><span>FLX</span>-Nano Architecture Explorer<span class="badge">~145M params</span><span class="badge">5 cortices</span><span class="badge">60 delta slots</span></h1>
+  </div>
   <div class="tau-control">
-    <label>Thermal τ</label>
-    <input type="range" id="tauSlider" min="0" max="100" value="20">
-    <div class="tau-val" id="tauValue">0.20</div>
-    <div class="tau-regime regime-fast" id="tauRegime">FAST</div>
+    <label>Thermal&nbsp;τ</label>
+    <input type="range" id="tauSlider" min="0" max="100" value="50">
+    <div class="tau-val" id="tauVal">0.50</div>
   </div>
 </header>
 
-<div class="main-layout">
-  <div class="pipeline" id="pipeline"></div>
-  <div class="detail-panel" id="detailPanel">
-    <div class="placeholder-detail">
-      <div class="icon">⬅</div>
-      <div class="hint">Click any component to inspect it.<br>Drag the τ slider to see thermal gating.</div>
-    </div>
-  </div>
+<div class="legend">
+  <span><i style="background:var(--accent)"></i> Data flow</span>
+  <span><i style="background:var(--accent4)"></i> Cross-cortical bridge (τ≥0.3)</span>
+  <span><i style="background:var(--accent2)"></i> Memory loop (τ≥0.7)</span>
+  <span><i style="background:var(--accent3)"></i> Active strata</span>
+  <span><i style="background:#e3b341"></i> τ-gated component</span>
+</div>
+
+<div class="main-grid">
+<div class="canvas-area">
+<svg id="svg" viewBox="0 0 860 730" width="100%" style="max-width:860px;" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <marker id="ah" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="#8b949e"/>
+  </marker>
+  <linearGradient id="tg" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0%" stop-color="#58a6ff"/>
+    <stop offset="100%" stop-color="#f85149"/>
+  </linearGradient>
+</defs>
+
+<!-- tau broadcast -->
+<text x="430" y="20" text-anchor="middle" fill="#8b949e" font-size="10" font-family="system-ui">τ broadcasts to all gated components ↓</text>
+<line x1="90" y1="28" x2="770" y2="28" stroke="url(#tg)" stroke-width="2" opacity="0.35" stroke-dasharray="6 4"/>
+
+<!-- INPUT -->
+<g class="node" data-id="input" transform="translate(375,42)">
+  <rect x="0" y="0" width="110" height="34" fill="#1c2128" stroke="#484f58"/>
+  <text x="55" y="21" font-size="13" font-weight="600">input_ids</text>
+</g>
+<line class="arrow on" x1="430" y1="76" x2="430" y2="98"/>
+
+<!-- SHARED TRUNK -->
+<g class="node" data-id="trunk" transform="translate(305,100)">
+  <rect x="0" y="0" width="250" height="52" fill="#131d2e" stroke="#3a5f9c"/>
+  <text x="125" y="19" font-weight="600">SharedTrunk</text>
+  <text x="125" y="33" class="sub">Canonizer → Embedder → 6 Transformer Layers</text>
+  <text x="125" y="46" class="sub" fill="#7ee787">~100M params · basic stratum for all cortices</text>
+</g>
+<line class="arrow on" x1="430" y1="152" x2="430" y2="176"/>
+
+<!-- THERMAL ESTIMATOR -->
+<g class="node" data-id="thermal" transform="translate(650,100)">
+  <rect x="0" y="0" width="140" height="48" fill="#2d1a1a" stroke="#8b4040"/>
+  <text x="70" y="18" font-weight="600" fill="#f78166">τ Estimator</text>
+  <text x="70" y="33" class="sub">surprise + novelty</text>
+  <text x="70" y="45" class="sub" fill="#f78166">~0.5M · gates depth</text>
+</g>
+<line class="arrow" x1="555" y1="126" x2="650" y2="126" stroke="#8b4040"/>
+
+<!-- THALAMIC ROUTER -->
+<g class="node" data-id="router" transform="translate(325,178)">
+  <rect x="0" y="0" width="210" height="44" fill="#142220" stroke="#3a7a5a"/>
+  <text x="105" y="18" font-weight="600" fill="#7ee787">Thalamic Router</text>
+  <text x="105" y="33" class="sub">chunk-level multi-hot domain scoring · ~2M</text>
+</g>
+
+<!-- Fan-out to cortices -->
+<line class="arrow on" x1="345" y1="222" x2="96" y2="272"/>
+<line class="arrow on" x1="385" y1="222" x2="240" y2="272"/>
+<line class="arrow on" x1="430" y1="222" x2="386" y2="272"/>
+<line class="arrow on" x1="475" y1="222" x2="530" y2="272"/>
+<line class="arrow on" x1="515" y1="222" x2="676" y2="272"/>
+
+<!-- ===== CORTICES ===== -->
+<!-- Language -->
+<g class="node cortex" data-id="cortex-language" transform="translate(26,274)">
+  <rect x="0" y="0" width="140" height="118" fill="#161b22" stroke="#58a6ff" opacity="0.9"/>
+  <text x="70" y="17" font-weight="600" fill="#58a6ff">Language</text>
+  <rect class="strata-bar" data-s="int" x="10" y="28" width="120" height="14" rx="3" fill="#1a2e1a" stroke="#3a6a2a"/>
+  <text x="70" y="39" font-size="9" fill="#7ee787">intermediate τ≥0.25</text>
+  <rect class="strata-bar" data-s="exp" x="10" y="48" width="120" height="14" rx="3" fill="#2e2a1a" stroke="#6a6a2a"/>
+  <text x="70" y="59" font-size="9" fill="#e3b341">expert τ≥0.50</text>
+  <rect class="strata-bar" data-s="fro" x="10" y="68" width="120" height="14" rx="3" fill="#2e1a1a" stroke="#6a2a2a"/>
+  <text x="70" y="79" font-size="9" fill="#f85149">frontier τ≥0.70</text>
+  <text x="70" y="98" class="sub">3 Δ slots per stratum</text>
+  <text x="70" y="110" class="sub" fill="#7ee787">~10M</text>
+</g>
+
+<!-- Math -->
+<g class="node cortex" data-id="cortex-math" transform="translate(170,274)">
+  <rect x="0" y="0" width="140" height="118" fill="#161b22" stroke="#f78166" opacity="0.9"/>
+  <text x="70" y="17" font-weight="600" fill="#f78166">Math</text>
+  <rect class="strata-bar" data-s="int" x="10" y="28" width="120" height="14" rx="3" fill="#1a2e1a" stroke="#3a6a2a"/>
+  <text x="70" y="39" font-size="9" fill="#7ee787">intermediate τ≥0.25</text>
+  <rect class="strata-bar" data-s="exp" x="10" y="48" width="120" height="14" rx="3" fill="#2e2a1a" stroke="#6a6a2a"/>
+  <text x="70" y="59" font-size="9" fill="#e3b341">expert τ≥0.50</text>
+  <rect class="strata-bar" data-s="fro" x="10" y="68" width="120" height="14" rx="3" fill="#2e1a1a" stroke="#6a2a2a"/>
+  <text x="70" y="79" font-size="9" fill="#f85149">frontier τ≥0.70</text>
+  <text x="70" y="98" class="sub">3 Δ slots per stratum</text>
+  <text x="70" y="110" class="sub" fill="#7ee787">~10M</text>
+</g>
+
+<!-- Code -->
+<g class="node cortex" data-id="cortex-code" transform="translate(316,274)">
+  <rect x="0" y="0" width="140" height="118" fill="#161b22" stroke="#d2a8ff" opacity="0.9"/>
+  <text x="70" y="17" font-weight="600" fill="#d2a8ff">Code</text>
+  <rect class="strata-bar" data-s="int" x="10" y="28" width="120" height="14" rx="3" fill="#1a2e1a" stroke="#3a6a2a"/>
+  <text x="70" y="39" font-size="9" fill="#7ee787">intermediate τ≥0.25</text>
+  <rect class="strata-bar" data-s="exp" x="10" y="48" width="120" height="14" rx="3" fill="#2e2a1a" stroke="#6a6a2a"/>
+  <text x="70" y="59" font-size="9" fill="#e3b341">expert τ≥0.50</text>
+  <rect class="strata-bar" data-s="fro" x="10" y="68" width="120" height="14" rx="3" fill="#2e1a1a" stroke="#6a2a2a"/>
+  <text x="70" y="79" font-size="9" fill="#f85149">frontier τ≥0.70</text>
+  <text x="70" y="98" class="sub">3 Δ slots per stratum</text>
+  <text x="70" y="110" class="sub" fill="#7ee787">~10M</text>
+</g>
+
+<!-- Science -->
+<g class="node cortex" data-id="cortex-science" transform="translate(460,274)">
+  <rect x="0" y="0" width="140" height="118" fill="#161b22" stroke="#7ee787" opacity="0.9"/>
+  <text x="70" y="17" font-weight="600" fill="#7ee787">Science</text>
+  <rect class="strata-bar" data-s="int" x="10" y="28" width="120" height="14" rx="3" fill="#1a2e1a" stroke="#3a6a2a"/>
+  <text x="70" y="39" font-size="9" fill="#7ee787">intermediate τ≥0.25</text>
+  <rect class="strata-bar" data-s="exp" x="10" y="48" width="120" height="14" rx="3" fill="#2e2a1a" stroke="#6a6a2a"/>
+  <text x="70" y="59" font-size="9" fill="#e3b341">expert τ≥0.50</text>
+  <rect class="strata-bar" data-s="fro" x="10" y="68" width="120" height="14" rx="3" fill="#2e1a1a" stroke="#6a2a2a"/>
+  <text x="70" y="79" font-size="9" fill="#f85149">frontier τ≥0.70</text>
+  <text x="70" y="98" class="sub">3 Δ slots per stratum</text>
+  <text x="70" y="110" class="sub" fill="#7ee787">~10M</text>
+</g>
+
+<!-- Reasoning -->
+<g class="node cortex" data-id="cortex-reasoning" transform="translate(606,274)">
+  <rect x="0" y="0" width="140" height="118" fill="#161b22" stroke="#e3b341" opacity="0.9"/>
+  <text x="70" y="17" font-weight="600" fill="#e3b341">Reasoning</text>
+  <rect class="strata-bar" data-s="int" x="10" y="28" width="120" height="14" rx="3" fill="#1a2e1a" stroke="#3a6a2a"/>
+  <text x="70" y="39" font-size="9" fill="#7ee787">intermediate τ≥0.25</text>
+  <rect class="strata-bar" data-s="exp" x="10" y="48" width="120" height="14" rx="3" fill="#2e2a1a" stroke="#6a6a2a"/>
+  <text x="70" y="59" font-size="9" fill="#e3b341">expert τ≥0.50</text>
+  <rect class="strata-bar" data-s="fro" x="10" y="68" width="120" height="14" rx="3" fill="#2e1a1a" stroke="#6a2a2a"/>
+  <text x="70" y="79" font-size="9" fill="#f85149">frontier τ≥0.70</text>
+  <text x="70" y="98" class="sub">3 Δ slots per stratum</text>
+  <text x="70" y="110" class="sub" fill="#7ee787">~10M</text>
+</g>
+
+<!-- Cross-cortical bridges -->
+<path class="arrow bridge" data-b="1" d="M 166,333 C 185,320 195,320 210,333"/>
+<path class="arrow bridge" data-b="2" d="M 310,333 C 330,320 340,320 356,333"/>
+<path class="arrow bridge" data-b="3" d="M 456,333 C 475,320 485,320 500,333"/>
+<path class="arrow bridge" data-b="4" d="M 600,333 C 618,320 630,320 646,333"/>
+<path class="arrow bridge" data-b="5" d="M 96,398 C 96,428 386,428 386,398"/>
+<path class="arrow bridge" data-b="6" d="M 240,398 C 240,438 676,438 676,398"/>
+
+<!-- Bridges label node -->
+<g class="node" data-id="bridges" transform="translate(10,420)">
+  <rect x="0" y="0" width="120" height="34" fill="#1a1a2a" stroke="#6a4a8a"/>
+  <text x="60" y="14" font-size="10" font-weight="600" fill="#d2a8ff">10 Bridges</text>
+  <text x="60" y="27" class="sub" fill="#d2a8ff">~5M · τ≥0.3</text>
+</g>
+
+<!-- Fan-in to merger -->
+<line class="arrow on" x1="96" y1="392" x2="340" y2="462"/>
+<line class="arrow on" x1="240" y1="392" x2="370" y2="462"/>
+<line class="arrow on" x1="386" y1="392" x2="400" y2="462"/>
+<line class="arrow on" x1="530" y1="392" x2="430" y2="462"/>
+<line class="arrow on" x1="676" y1="392" x2="460" y2="462"/>
+
+<!-- CORTEX MERGER -->
+<g class="node" data-id="merger" transform="translate(315,464)">
+  <rect x="0" y="0" width="230" height="42" fill="#1a1a22" stroke="#6a6a8a"/>
+  <text x="115" y="17" font-weight="600">Cortex Merger</text>
+  <text x="115" y="32" class="sub">weighted combination + residual gate · ~3M</text>
+</g>
+<line class="arrow on" x1="430" y1="506" x2="430" y2="530"/>
+
+<!-- MEMORY CONTROLLER -->
+<g class="node" data-id="memory" transform="translate(305,532)">
+  <rect x="0" y="0" width="250" height="52" fill="#142222" stroke="#3a7a7a"/>
+  <text x="125" y="18" font-weight="600">Memory Controller</text>
+  <text x="125" y="33" class="sub">episodic retrieval + refinement loops</text>
+  <text x="125" y="46" class="sub" fill="#7ee787">~10M · retrieval τ≥0.5 · loops τ≥0.7</text>
+</g>
+
+<!-- Episodic Buffer -->
+<g class="node" data-id="episodic" transform="translate(630,536)">
+  <rect x="0" y="0" width="140" height="42" fill="#142222" stroke="#3a7a7a"/>
+  <text x="70" y="16" font-size="11" font-weight="600">Episodic Buffer</text>
+  <text x="70" y="30" class="sub">compressed sessions · ~3M</text>
+</g>
+<line class="arrow" x1="555" y1="558" x2="630" y2="558"/>
+
+<!-- Memory loop -->
+<path class="arrow loop" data-loop="1" d="M 305,558 C 255,558 245,500 310,484"/>
+
+<!-- Loop label -->
+<text class="loop-label" x="248" y="520" fill="#f78166" font-size="9" opacity="0" font-family="system-ui">max 3 loops</text>
+
+<line class="arrow on" x1="430" y1="584" x2="430" y2="610"/>
+
+<!-- DECODER -->
+<g class="node" data-id="decoder" transform="translate(340,612)">
+  <rect x="0" y="0" width="180" height="38" fill="#1c2128" stroke="#484f58"/>
+  <text x="90" y="16" font-weight="600">Decoder</text>
+  <text x="90" y="30" class="sub">LayerNorm → Linear · ~8M</text>
+</g>
+<line class="arrow on" x1="430" y1="650" x2="430" y2="672"/>
+
+<!-- OUTPUT -->
+<g class="node" data-id="output" transform="translate(375,674)">
+  <rect x="0" y="0" width="110" height="30" fill="#1c2128" stroke="#484f58"/>
+  <text x="55" y="19" font-size="13" font-weight="600">logits</text>
+</g>
+
+<!-- META-DELTA GENERATOR -->
+<g class="node" data-id="meta" transform="translate(640,628)">
+  <rect x="0" y="0" width="150" height="42" fill="#2a1a2a" stroke="#7a3a7a"/>
+  <text x="75" y="16" font-size="11" font-weight="600" fill="#d2a8ff">Meta-Δ Generator</text>
+  <text x="75" y="30" class="sub">self-improvement · ~5M</text>
+</g>
+
+<!-- DELTA annotation -->
+<g class="node" data-id="delta" transform="translate(10,465)">
+  <rect x="0" y="0" width="130" height="48" fill="#131d2e" stroke="#3a5f9c"/>
+  <text x="65" y="16" font-size="11" font-weight="600" fill="#58a6ff">Δ Deltas</text>
+  <text x="65" y="30" class="sub">low-rank B@A · rank 32</text>
+  <text x="65" y="42" class="sub">stackable · removable</text>
+</g>
+
+</svg>
+</div>
+
+<div class="detail-panel" id="panel">
+  <h2>FLX-Nano Architecture</h2>
+  <p style="margin:8px 0 0">Click any component to see details. Drag the <b>τ slider</b> to see how thermal gating activates deeper strata, opens bridges, and triggers memory loops.</p>
+
+  <h3 style="margin-top:18px">Full Pipeline</h3>
+  <p style="font-family:monospace; font-size:11px; color:var(--accent); line-height:2;">
+    input → SharedTrunk → Router → Cortices → Bridges → Merger → Memory → Decoder → logits
+  </p>
+
+  <h3>Training Phases</h3>
+  <ul class="phase-list">
+    <li class="p0"><strong>Phase 0</strong> — Cortex Specialization: force cortices to develop distinct domain receptive fields</li>
+    <li class="p1"><strong>Phase 1</strong> — Delta-Receptive Pretraining: train cortex bases as compositional substrates for deltas</li>
+    <li class="p2"><strong>Phase 2</strong> — Thermal Training: freeze cortex bases, train τ estimator + strata gates</li>
+    <li class="p3"><strong>Phase 3</strong> — Memory Training: train episodic compressor + memory controller on conversation chains</li>
+    <li class="p4"><strong>Phase 4</strong> — Meta-Generator: train delta generator with meta-learning on error signals</li>
+  </ul>
+
+  <h3>Parameter Breakdown</h3>
+  <table class="param-table">
+    <tr><th>Component</th><th>Params</th></tr>
+    <tr><td>SharedTrunk</td><td>~100M</td></tr>
+    <tr><td>5× Cortices</td><td>~50M</td></tr>
+    <tr><td>Bridges (10 pairs)</td><td>~5M</td></tr>
+    <tr><td>Cortex Merger</td><td>~3M</td></tr>
+    <tr><td>Memory Controller</td><td>~10M</td></tr>
+    <tr><td>Decoder</td><td>~8M</td></tr>
+    <tr><td>τ Estimator</td><td>~0.5M</td></tr>
+    <tr><td>Episodic Compressor</td><td>~3M</td></tr>
+    <tr><td>Meta-Δ Generator</td><td>~5M</td></tr>
+    <tr><th style="color:var(--accent)">Total</th><th style="color:var(--accent3)">~145M</th></tr>
+  </table>
+
+  <h3 style="margin-top:18px">Key Numbers</h3>
+  <table class="param-table">
+    <tr><td>d_model</td><td>512</td></tr>
+    <tr><td>Attention heads</td><td>8</td></tr>
+    <tr><td>Delta rank</td><td>32</td></tr>
+    <tr><td>Strata per cortex</td><td>3 + shared basic</td></tr>
+    <tr><td>Total delta slots</td><td>60</td></tr>
+    <tr><td>Max seq length</td><td>2048</td></tr>
+    <tr><td>Vocab size</td><td>32,000</td></tr>
+  </table>
+</div>
 </div>
 
 <script>
-const COMPONENTS = {
+const info = {
   input: {
-    label: 'Input Tokens',
-    sub: 'Raw text / token ids',
-    type: 'Entry Point',
-    desc: 'Raw token stream entering the model. Text is tokenized before reaching the canonizer.',
-    params: '—',
-    details: {}
+    title: "Input",
+    tags: [],
+    params: null,
+    desc: "Raw token IDs fed into the model. Standard integer tensor of shape [batch, seq_len].",
+    details: ["Vocab: 32,000 tokens", "Max sequence: 2,048 tokens", "Feeds directly into SharedTrunk"]
   },
-  canonizer: {
-    label: 'Canonizer',
-    sub: '~2M params · 1 layer',
-    type: 'Preprocessing',
-    desc: 'Normalizes input representations into the model\'s canonical embedding space. Handles token-level preprocessing the base was trained to expect. Small, fast, rarely needs deltas — the stable entry point.',
-    params: '~2M',
-    details: { Layers: '1', Role: 'Input normalization', 'Delta Slots': 'Rare' }
-  },
-  embedder: {
-    label: 'Embedder',
-    sub: '~15M params · 2 layers',
-    type: 'Embedding',
-    desc: 'Maps tokens into the compositional embedding space. Optimized for clean delta composition — "directions" in the space remain interpretable across delta stacks. This is the shared coordinate system that makes deltas portable across cortices.',
-    params: '~15M',
-    details: { Layers: '2', d_model: '512', Heads: '8', Role: 'Shared coordinate system' }
+  trunk: {
+    title: "SharedTrunk",
+    tags: [["~100M", "green"], ["basic stratum", "yellow"]],
+    params: "~100M",
+    desc: "The thick shared backbone — canonizer, embeddings, and 6 transformer layers. Acts as the basic stratum shared by all cortices. Most of the model's parameters live here.",
+    details: [
+      "Canonizer: LayerNorm for input normalization",
+      "Token + positional embeddings (~15M)",
+      "6 Transformer encoder layers with causal masking (~70M)",
+      "Pre-norm architecture (LayerNorm first)",
+      "IS the basic stratum — not duplicated per cortex",
+      "\"Thick trunk, thin branches\" design from spec 10",
+      "Every cortex builds on top of this shared representation"
+    ]
   },
   thermal: {
-    label: 'Thermal Estimator (τ)',
-    sub: '~0.5M params',
-    type: 'Control Signal',
-    desc: 'A small learned network that computes τ from input surprise + context novelty + thermal history. τ is a differentiable arousal signal in (0,1) that broadcasts to every gate in the model: strata thresholds, bridge bandwidths, memory triggers, loop counts. Trained end-to-end in Phase 2.',
-    params: '~0.5M',
-    details: {
-      'Inputs': 'surprise + context novelty + history',
-      'Output': 'scalar τ ∈ (0, 1)',
-      'Trained': 'Phase 2 (frozen cortex bases)',
-    }
+    title: "Thermal Estimator (τ)",
+    tags: [["~0.5M", "green"], ["gates everything", "hot"]],
+    params: "~0.5M",
+    desc: "Computes τ ∈ (0,1) from input surprise and context novelty. This single scalar controls the entire model's depth: which strata fire, which bridges open, whether memory kicks in, how many refinement loops run.",
+    details: [
+      "Surprise head: how unexpected is the input?",
+      "Context novelty head: how new is the context?",
+      "τ = 0.6 × surprise + 0.4 × novelty",
+      "Exponentially smoothed with learned history weight",
+      "Low τ (~0.2): only intermediate strata, no bridges, no memory",
+      "Mid τ (~0.5): expert strata activate, bridges open, memory retrieves",
+      "High τ (~0.8): all strata, all bridges, memory loops up to 3×",
+      "Trained in Phase 2 (cortex weights frozen)"
+    ]
   },
   router: {
-    label: 'Thalamic Router',
-    sub: '~2M params · 1 layer',
-    type: 'Routing',
-    desc: 'Like the brain\'s thalamus — classifies which domains the input needs and dispatches via multi-hot scores. "Solve this word problem" → math=0.9, language=0.7. Also estimates input difficulty for strata depth. Trained in Phase 0 with diversity pressure.',
-    params: '~2M',
-    details: { 'Output': 'Multi-hot domain scores', 'Threshold': '> 0.2 to activate cortex', 'Trained': 'Phase 0' }
+    title: "Thalamic Router",
+    tags: [["~2M", "green"], ["multi-hot", ""], ["chunk-level", "purple"]],
+    params: "~2M",
+    desc: "Detects which knowledge domains the input needs and routes to the right cortices. Multiple cortices can activate simultaneously — \"solve this integral in Python\" hits Math + Code + Language.",
+    details: [
+      "Processes input in 64-token chunks (not whole-sequence averaging)",
+      "Max-aggregation across chunks → union of domain needs",
+      "Activation threshold: 0.2 (below = cortex stays off)",
+      "Outputs dict[str, Tensor] keyed by cortex name",
+      "Trained Phase 0 with diversity + load-balance losses",
+      "Dropout routing (p=0.1) prevents winner-take-all collapse",
+      "Balance loss starts high → anneals down (equal routing → natural specialization)"
+    ]
   },
-  cortices: {
-    label: 'Domain Cortices',
-    sub: '5 × ~20M params each',
-    type: 'Core Processing',
-    isCortexRow: true,
-  },
+  "cortex-language": cx("Language", "#58a6ff", "Natural language understanding, grammar, semantics, discourse, generation"),
+  "cortex-math": cx("Math", "#f78166", "Arithmetic, algebra, calculus, proofs, mathematical reasoning, word problems"),
+  "cortex-code": cx("Code", "#d2a8ff", "Programming syntax, algorithms, debugging, code gen, software patterns"),
+  "cortex-science": cx("Science", "#7ee787", "Physics, chemistry, biology, scientific reasoning, experimental design"),
+  "cortex-reasoning": cx("Reasoning", "#e3b341", "Logic, deduction, planning, chain-of-thought, meta-cognition, problem decomposition"),
   bridges: {
-    label: 'Cross-Cortical Bridges',
-    sub: '~5M params · 10 pairs',
-    type: 'Inter-domain Communication',
-    desc: 'Learned linear projections with bandwidth gates between cortex pairs. At low τ, bridges are quiet — cortices work independently. At high τ, bridges open for multi-domain reasoning. Each bridge has a learned compatibility score.',
-    params: '~5M',
-    tauMin: 0.3,
-    details: { 'Pairs': '10 (all cortex combos)', 'τ gate': '> 0.3', 'Bandwidth': 'Learned per pair' }
+    title: "Cross-Cortical Bridges",
+    tags: [["~5M", "green"], ["τ≥0.3", "hot"], ["10 pairs", "purple"]],
+    params: "~5M",
+    desc: "Communication channels between cortex pairs for multi-domain reasoning. \"Explain this code's time complexity\" needs Code→Math. Bridges are bandwidth-gated and thermally controlled.",
+    details: [
+      "10 bidirectional pairs for 5 cortices",
+      "Each: linear projection + learned bandwidth + compatibility score",
+      "Thermal gating: sigmoid curves around [τ_min, τ_max] window",
+      "Bridges only open when τ ≥ 0.3",
+      "Model learns which pairs need strong connections",
+      "Language↔Math: word problems",
+      "Code↔Reasoning: debugging / algorithm design",
+      "Science↔Math: equations / proofs in science context"
+    ]
   },
   merger: {
-    label: 'Cortex Merger',
-    sub: '~3M params · 1 layer',
-    type: 'Aggregation',
-    desc: 'Combines all active cortex outputs, weighted by the router\'s domain scores. Pure-math input → 90% Math, 10% Language. Also applies a learned residual gate to preserve information from the embedder.',
-    params: '~3M',
-    details: { 'Weighting': 'Router domain scores', 'Residual': 'Learned gate from embedder' }
+    title: "Cortex Merger",
+    tags: [["~3M", "green"], ["residual gate", ""]],
+    params: "~3M",
+    desc: "Combines all active cortex outputs weighted by router scores. A residual gate preserves trunk information that no cortex explicitly captured.",
+    details: [
+      "Weighted sum of cortex outputs, normalized by total weight",
+      "Residual gate: Linear(concat(merged, trunk_output))",
+      "LayerNorm after gating for stability",
+      "Pure-math input: ~90% Math, ~10% Language",
+      "Mixed input: balanced merge across relevant cortices"
+    ]
   },
   memory: {
-    label: 'Memory Controller',
-    sub: '~10M params · 2 layers',
-    type: 'Episodic Memory',
-    desc: 'Reads from episodic buffer (compressed past sessions) and working memory (current KV cache). When τ > 0.5, retrieves relevant episode vectors. When τ > 0.7, loops back through the cortex merger for refinement (max 3 loops).',
-    params: '~10M',
-    tauMin: 0.5,
-    loopTauMin: 0.7,
-    details: {
-      'Retrieval gate': 'τ > 0.5',
-      'Loop gate': 'τ > 0.7',
-      'Max loops': '3',
-      'Episode size': '256 floats (~512 bytes)',
-    }
+    title: "Memory Controller",
+    tags: [["~10M", "green"], ["retrieval τ≥0.5", "hot"], ["loops τ≥0.7", "hot"]],
+    params: "~10M",
+    desc: "The only component that can loop. Retrieves relevant compressed episodes from past sessions and feeds them back through the merger. Enables cross-session memory and deeper reasoning via refinement loops.",
+    details: [
+      "Retrieval: attention-based query over episodic buffer",
+      "τ ≥ 0.5: episodic retrieval activates",
+      "τ ≥ 0.7: refinement loops trigger (max 3)",
+      "Each loop: re-merge cortex outputs with memory-fused state",
+      "\"Last week you mentioned X\" — works natively",
+      "No RAG pipeline needed — memory is a core inference capability",
+      "Trained Phase 3 on multi-turn conversation chains"
+    ]
+  },
+  episodic: {
+    title: "Episodic Buffer + Compressor",
+    tags: [["~3M", "green"], ["1000 episodes", ""], ["FIFO eviction", "purple"]],
+    params: "~3M",
+    desc: "Stores compressed summaries of prior sessions. The compressor turns KV cache chunks into 256-dim episode vectors. 1000 sessions fit in ~500KB.",
+    details: [
+      "Compressor: 2-layer transformer → mean pool → project to 256 dims",
+      "Buffer: simple list, FIFO eviction at capacity",
+      "Episodes are detached (no gradient through old sessions)",
+      "Serializable — saved in the .flx file for cross-session persistence"
+    ]
   },
   decoder: {
-    label: 'Decoder → Logits',
-    sub: '~8M params · 1 layer',
-    type: 'Output',
-    desc: 'Final projection to vocabulary logits. Relatively simple — the expressive work happens upstream in the cortices. Decoder deltas are rare and typically capture output-format preferences (code formatting, citation style).',
-    params: '~8M',
-    details: { 'Output': 'Vocabulary logits', 'Delta Slots': 'Rare (formatting only)' }
+    title: "Decoder",
+    tags: [["~8M", "green"]],
+    params: "~8M",
+    desc: "Final projection from hidden states to vocabulary logits. Simple layer — the expressive work happens in the cortices.",
+    details: [
+      "LayerNorm → Linear(512, 32000, no bias)",
+      "Decoder deltas are rare (output format preferences only)",
+      "Standard autoregressive setup"
+    ]
   },
   output: {
-    label: 'Output',
-    sub: 'Generated tokens',
-    type: 'Exit Point',
-    desc: 'Final token predictions sampled from the logit distribution.',
-    params: '—',
-    details: {}
+    title: "Output Logits",
+    tags: [],
+    params: null,
+    desc: "Raw logits [batch, seq_len, 32000]. Standard next-token prediction output.",
+    details: ["Apply softmax → sampling for text generation", "Shape: [batch, seq, 32000]"]
   },
+  delta: {
+    title: "Δ Delta System",
+    tags: [["rank 32", ""], ["stackable", "green"], ["removable", "hot"], ["B@A", "purple"]],
+    params: "per-delta: ~33K",
+    desc: "The core learning primitive. W_delta = confidence × scale × B @ A. Low-rank matrices that stack onto base weights. Each carries provenance metadata — who created it, when, what data, what confidence.",
+    details: [
+      "A: [32, d_in] — Kaiming init",
+      "B: [d_out, 32] — zero init (delta starts as no-op)",
+      "Scale: 1/rank (LoRA-style)",
+      "Confidence: learned [0,1], evolves over time",
+      "60 total slots across 5 cortices × 3 strata × ~4 slots",
+      "Thermal threshold: each delta has its own τ_min",
+      "Full provenance: name, source, cortex, stratum, date",
+      "Push/pop/transplant between models sharing same trunk"
+    ]
+  },
+  meta: {
+    title: "Meta-Δ Generator",
+    tags: [["~5M", "green"], ["self-improvement", "purple"], ["Phase 4", "yellow"]],
+    params: "~5M",
+    desc: "Takes accumulated error signals + current delta state → outputs a new candidate delta in one forward pass. Turns hours of fine-tuning into milliseconds. Candidate is validated before acceptance.",
+    details: [
+      "Error encoder: 2-layer transformer over error buffer",
+      "Stack encoder: linear over current delta summary",
+      "Outputs: A, B matrices + target cortex + stratum + threshold",
+      "New deltas start at confidence=0.1 (probationary)",
+      "Validated against held-out error slice",
+      "Accept if loss_after < loss_before, else rollback",
+      "Confidence grows with continued success",
+      "Trained Phase 4 with meta-learning objective"
+    ]
+  }
 };
 
-const CORTEX_LIST = [
-  { id: 'language', name: 'Language', color: '#58a6ff', exampleScore: 0.7 },
-  { id: 'math',     name: 'Math',     color: '#3fb950', exampleScore: 0.9 },
-  { id: 'code',     name: 'Code',     color: '#d29922', exampleScore: 0.2 },
-  { id: 'science',  name: 'Science',  color: '#bc8cff', exampleScore: 0.15 },
-  { id: 'reasoning',name: 'Reasoning',color: '#f778ba', exampleScore: 0.6 },
-];
-
-const STRATA = [
-  { name: 'Basic',        tauMin: 0.0,  conf: 1.0,  cls: 's-basic',        color: '#3fb950' },
-  { name: 'Intermediate', tauMin: 0.25, conf: 0.7,  cls: 's-intermediate', color: '#58a6ff' },
-  { name: 'Expert',       tauMin: 0.5,  conf: 0.5,  cls: 's-expert',       color: '#d29922' },
-  { name: 'Frontier',     tauMin: 0.7,  conf: 0.3,  cls: 's-frontier',     color: '#f85149' },
-];
-
-const CORTEX_DETAIL = {
-  desc: 'Specialized sub-network for this knowledge domain. Contains 4 hierarchical strata (basic → frontier) each with their own delta stacks. Cortices don\'t share weight space — deltas in one cortex never interfere with another.',
-  params: '~20M',
-  layers: '8 (2 per stratum)',
-  deltaSlots: '12 (3 per stratum)',
-};
-
-let tau = 0.2;
-let selectedId = null;
-let selectedCortex = null;
-
-// ── Build pipeline ──
-function buildPipeline() {
-  const pipeline = document.getElementById('pipeline');
-  pipeline.innerHTML = '';
-  const order = ['input','canonizer','embedder','thermal','router','cortices','bridges','merger','memory','decoder','output'];
-
-  order.forEach((id, i) => {
-    const comp = COMPONENTS[id];
-    if (id === 'cortices') {
-      const lbl = document.createElement('div');
-      lbl.className = 'section-label';
-      lbl.textContent = 'DOMAIN CORTICES (4 strata each)';
-      pipeline.appendChild(lbl);
-
-      const row = document.createElement('div');
-      row.className = 'cortex-row';
-      row.id = 'cortexRow';
-      CORTEX_LIST.forEach(c => {
-        const el = document.createElement('div');
-        el.className = 'cortex-node';
-        el.id = 'cortex-' + c.id;
-        el.innerHTML = `
-          <div class="cortex-name">${c.name}</div>
-          <div class="cortex-score" id="score-${c.id}">score: ${c.exampleScore.toFixed(2)}</div>
-          <div class="strata-bar">
-            ${STRATA.map(s => `<div class="s ${s.cls}" id="sb-${c.id}-${s.name}" style="opacity:${tau >= s.tauMin ? 1 : 0.15}"></div>`).join('')}
-          </div>
-        `;
-        el.onclick = (e) => { e.stopPropagation(); selectCortex(c.id); };
-        row.appendChild(el);
-      });
-      pipeline.appendChild(row);
-    } else if (id === 'bridges') {
-      const active = tau >= 0.3;
-      const el = document.createElement('div');
-      el.className = 'bridge-row' + (active ? ' active-bridge' : ' inactive');
-      el.id = 'node-bridges';
-      el.innerHTML = `<span>⇌</span> Cross-Cortical Bridges (10 pairs) — ${active ? 'ACTIVE' : 'inactive'} <span style="margin-left:auto;font-size:10px">τ ≥ 0.3</span>`;
-      el.onclick = () => selectNode('bridges');
-      pipeline.appendChild(el);
-    } else if (id === 'memory') {
-      // Loop indicator
-      const loopActive = tau >= 0.7;
-      const loopEl = document.createElement('div');
-      loopEl.className = 'loop-indicator' + (loopActive ? ' loop-active' : '');
-      loopEl.id = 'loopIndicator';
-      loopEl.innerHTML = `<span class="loop-icon">↻</span> Refinement Loop (max 3) — ${loopActive ? 'ACTIVE' : 'inactive'} <span style="margin-left:auto;font-size:10px">τ ≥ 0.7</span>`;
-      pipeline.appendChild(loopEl);
-
-      // Node
-      const node = document.createElement('div');
-      node.className = 'node' + (tau >= 0.5 ? ' active-glow' : tau < 0.5 ? ' inactive' : '');
-      node.id = 'node-' + id;
-      node.innerHTML = `<div class="node-label">${comp.label}</div><div class="node-sub">${comp.sub}</div>`;
-      if (comp.tauMin !== undefined) {
-        const on = tau >= comp.tauMin;
-        node.innerHTML += `<div class="node-badge" style="background:${on ? '#3fb95033;color:#3fb950' : '#f8514933;color:#f85149'}">${on ? 'ON' : 'OFF'} τ≥${comp.tauMin}</div>`;
-      }
-      node.onclick = () => selectNode(id);
-      pipeline.appendChild(node);
-    } else {
-      const node = document.createElement('div');
-      node.className = 'node';
-      node.id = 'node-' + id;
-      node.innerHTML = `<div class="node-label">${comp.label}</div><div class="node-sub">${comp.sub}</div>`;
-      node.onclick = () => selectNode(id);
-      pipeline.appendChild(node);
-    }
-
-    if (i < order.length - 1 && id !== 'cortices') {
-      const arrow = document.createElement('div');
-      arrow.className = 'flow-arrow active';
-      pipeline.appendChild(arrow);
-    }
-    if (id === 'cortices') {
-      const arrow = document.createElement('div');
-      arrow.className = 'flow-arrow active';
-      pipeline.appendChild(arrow);
-    }
-  });
-}
-
-function selectNode(id) {
-  selectedId = id;
-  selectedCortex = null;
-  document.querySelectorAll('.node').forEach(n => n.classList.remove('selected'));
-  document.querySelectorAll('.cortex-node').forEach(n => n.classList.remove('selected'));
-  const el = document.getElementById('node-' + id);
-  if (el) el.classList.add('selected');
-  renderDetail();
-}
-
-function selectCortex(cid) {
-  selectedId = 'cortex';
-  selectedCortex = cid;
-  document.querySelectorAll('.node').forEach(n => n.classList.remove('selected'));
-  document.querySelectorAll('.cortex-node').forEach(n => n.classList.remove('selected'));
-  document.getElementById('cortex-' + cid).classList.add('selected');
-  renderDetail();
-}
-
-function renderDetail() {
-  const panel = document.getElementById('detailPanel');
-
-  if (selectedId === 'cortex' && selectedCortex) {
-    const c = CORTEX_LIST.find(x => x.id === selectedCortex);
-    panel.innerHTML = `
-      <h2 style="color:${c.color}">${c.name} Cortex</h2>
-      <div class="detail-type">Domain Cortex</div>
-      <p>${CORTEX_DETAIL.desc}</p>
-
-      <div class="detail-section">
-        <h3>Parameters</h3>
-        <div class="stat-grid">
-          <div class="stat-card"><div class="stat-val">${CORTEX_DETAIL.params}</div><div class="stat-label">Total Params</div></div>
-          <div class="stat-card"><div class="stat-val">${CORTEX_DETAIL.layers}</div><div class="stat-label">Layers</div></div>
-          <div class="stat-card"><div class="stat-val">${CORTEX_DETAIL.deltaSlots}</div><div class="stat-label">Delta Slots</div></div>
-          <div class="stat-card"><div class="stat-val">512</div><div class="stat-label">d_model</div></div>
-        </div>
-      </div>
-
-      <div class="detail-section">
-        <h3>Strata (τ = ${tau.toFixed(2)})</h3>
-        <div class="strata-detail">
-          ${STRATA.map(s => {
-            const active = tau >= s.tauMin;
-            return `<div class="stratum-row ${active ? '' : 'stratum-inactive'}">
-              <div class="stratum-dot" style="background:${s.color}"></div>
-              <div class="stratum-name">${s.name}</div>
-              <div class="stratum-meta">τ≥${s.tauMin} · conf=${s.conf}</div>
-              <div style="font-size:10px;color:${active ? '#3fb950' : '#f85149'}">${active ? '● ON' : '○ OFF'}</div>
-            </div>`;
-          }).join('')}
-        </div>
-      </div>
-
-      <div class="detail-section">
-        <h3>Thermal Response</h3>
-        <div class="thermal-strip"><div class="marker" style="left:${tau * 100}%"></div></div>
-        <p style="margin-top:8px">At τ=${tau.toFixed(2)}: <strong>${tau < 0.25 ? 'Only basic stratum fires — foundational knowledge only.' : tau < 0.5 ? 'Basic + intermediate strata — standard domain knowledge.' : tau < 0.7 ? 'Expert strata active — specialized knowledge engaged.' : 'All strata including frontier — uncertain/cutting-edge knowledge.'}</strong></p>
-      </div>
-
-      <div class="detail-section">
-        <h3>Knowledge Examples (${c.name})</h3>
-        <table class="param-table">
-          ${getKnowledgeExamples(c.id).map(e => `<tr><td>${e[0]}</td><td>${e[1]}</td></tr>`).join('')}
-        </table>
-      </div>
-    `;
-    return;
-  }
-
-  const comp = COMPONENTS[selectedId];
-  if (!comp) {
-    panel.innerHTML = `<div class="placeholder-detail"><div class="icon">⬅</div><div class="hint">Click any component to inspect it.<br>Drag the τ slider to see thermal gating.</div></div>`;
-    return;
-  }
-
-  let extraHTML = '';
-
-  if (selectedId === 'thermal') {
-    extraHTML = `
-      <div class="detail-section">
-        <h3>Current τ Regime</h3>
-        <div class="thermal-strip"><div class="marker" style="left:${tau * 100}%"></div></div>
-        <table class="param-table" style="margin-top:12px">
-          <tr><td>0.0 – 0.3</td><td style="color:${tau < 0.3 ? '#3fb950' : '#8b949e'}">⚡ Fast path</td></tr>
-          <tr><td>0.3 – 0.5</td><td style="color:${tau >= 0.3 && tau < 0.5 ? '#58a6ff' : '#8b949e'}">📚 Standard</td></tr>
-          <tr><td>0.5 – 0.7</td><td style="color:${tau >= 0.5 && tau < 0.7 ? '#d29922' : '#8b949e'}">🔬 Deep</td></tr>
-          <tr><td>0.7 – 1.0</td><td style="color:${tau >= 0.7 ? '#f85149' : '#8b949e'}">🧠 Full depth</td></tr>
-        </table>
-      </div>
-      <div class="detail-section">
-        <h3>What τ Gates</h3>
-        <table class="param-table">
-          <tr><td>Strata activation</td><td>τ ≥ threshold</td></tr>
-          <tr><td>Cross-cortical bridges</td><td>τ ≥ 0.3</td></tr>
-          <tr><td>Memory retrieval</td><td>τ ≥ 0.5</td></tr>
-          <tr><td>Refinement loops</td><td>τ ≥ 0.7</td></tr>
-        </table>
-      </div>
-    `;
-  }
-
-  if (selectedId === 'bridges') {
-    const bridgeActive = tau >= 0.3;
-    const pairs = [
-      ['Language ↔ Math', 0.8], ['Language ↔ Code', 0.3], ['Language ↔ Reasoning', 0.7],
-      ['Math ↔ Code', 0.6], ['Math ↔ Science', 0.5], ['Math ↔ Reasoning', 0.7],
-      ['Code ↔ Science', 0.3], ['Code ↔ Reasoning', 0.5],
-      ['Science ↔ Reasoning', 0.6], ['Language ↔ Science', 0.4],
-    ];
-    extraHTML = `
-      <div class="detail-section">
-        <h3>Bridge Pairs (τ = ${tau.toFixed(2)})</h3>
-        <table class="param-table">
-          ${pairs.map(p => `<tr><td>${p[0]}</td><td style="color:${bridgeActive ? '#39d2c0' : '#8b949e'}">bw=${p[1]} ${bridgeActive ? '●' : '○'}</td></tr>`).join('')}
-        </table>
-      </div>
-    `;
-  }
-
-  if (selectedId === 'memory') {
-    extraHTML = `
-      <div class="detail-section">
-        <h3>Memory Tiers</h3>
-        <table class="param-table">
-          <tr><td>Working Memory</td><td>Live KV cache</td></tr>
-          <tr><td>Episodic Buffer</td><td>Compressed sessions</td></tr>
-          <tr><td>Thermal History</td><td>τ trajectory</td></tr>
-        </table>
-      </div>
-      <div class="detail-section">
-        <h3>Episodic Compressor</h3>
-        <table class="param-table">
-          <tr><td>Params</td><td>~3M</td></tr>
-          <tr><td>Episode size</td><td>256 floats (512 bytes)</td></tr>
-          <tr><td>1000 sessions</td><td>~500KB</td></tr>
-        </table>
-      </div>
-      <div class="detail-section">
-        <h3>Current State</h3>
-        <table class="param-table">
-          <tr><td>Retrieval</td><td style="color:${tau >= 0.5 ? '#3fb950' : '#f85149'}">${tau >= 0.5 ? '● ACTIVE' : '○ inactive'} (τ≥0.5)</td></tr>
-          <tr><td>Loops</td><td style="color:${tau >= 0.7 ? '#3fb950' : '#f85149'}">${tau >= 0.7 ? '● ACTIVE' : '○ inactive'} (τ≥0.7)</td></tr>
-        </table>
-      </div>
-    `;
-  }
-
-  if (selectedId === 'router') {
-    extraHTML = `
-      <div class="detail-section">
-        <h3>Example Routing</h3>
-        <p style="font-size:12px;color:var(--text-dim)">Input: "Solve this word problem about compound interest"</p>
-        <table class="param-table">
-          ${CORTEX_LIST.map(c => `<tr><td>${c.name}</td><td>${c.exampleScore.toFixed(2)}</td></tr>`).join('')}
-        </table>
-      </div>
-    `;
-  }
-
-  const detailRows = Object.entries(comp.details || {}).map(
-    ([k,v]) => `<tr><td>${k}</td><td>${v}</td></tr>`
-  ).join('');
-
-  panel.innerHTML = `
-    <h2>${comp.label}</h2>
-    <div class="detail-type">${comp.type}</div>
-    <p>${comp.desc || ''}</p>
-    ${comp.params && comp.params !== '—' ? `
-    <div class="detail-section">
-      <h3>Specs</h3>
-      <div class="stat-grid">
-        <div class="stat-card"><div class="stat-val">${comp.params}</div><div class="stat-label">Parameters</div></div>
-      </div>
-      ${detailRows ? `<table class="param-table" style="margin-top:12px">${detailRows}</table>` : ''}
-    </div>` : (detailRows ? `<div class="detail-section"><table class="param-table">${detailRows}</table></div>` : '')}
-    ${extraHTML}
-  `;
-}
-
-function getKnowledgeExamples(id) {
-  const map = {
-    language: [['Basic', 'Grammar, vocab, sentence parsing'], ['Intermediate', 'Rhetoric, style, translation'], ['Expert', 'Literary analysis, pragmatics'], ['Frontier', 'Novel idioms, emerging usage']],
-    math: [['Basic', 'Arithmetic, basic algebra'], ['Intermediate', 'Calculus, linear algebra, stats'], ['Expert', 'Abstract algebra, topology'], ['Frontier', 'Novel proofs, conjectures']],
-    code: [['Basic', 'Syntax, simple patterns'], ['Intermediate', 'Design patterns, APIs'], ['Expert', 'Systems design, optimization'], ['Frontier', 'Novel architectures, edge cases']],
-    science: [['Basic', 'Fundamental laws, definitions'], ['Intermediate', 'Applied sciences, methods'], ['Expert', 'Research-level knowledge'], ['Frontier', 'Emerging findings, hypotheses']],
-    reasoning: [['Basic', 'Simple logic, deduction'], ['Intermediate', 'Multi-step reasoning'], ['Expert', 'Abstract/formal reasoning'], ['Frontier', 'Novel inference strategies']],
+function cx(name, color, domain) {
+  return {
+    title: name + " Cortex",
+    tags: [["~10M", "green"], ["3 strata", "yellow"], ["9 Δ slots", "purple"]],
+    params: "~10M",
+    desc: "Specialized brain region for: " + domain + ". Contains intermediate, expert, and frontier strata (basic = shared trunk). Each stratum has its own transformer layers, confidence, and delta stack.",
+    details: [
+      "Intermediate (τ≥0.25): 2 layers, conf ~0.7, 3 delta slots",
+      "Expert (τ≥0.50): 2 layers, conf ~0.5, 3 delta slots",
+      "Frontier (τ≥0.70): 2 layers, conf ~0.3, 3 delta slots",
+      "Difficulty gate: softmax over strata from input features",
+      "Below-threshold strata output zeros (clean skip, no noise)",
+      "Confidence is learned — model discovers stratum reliability",
+      "Phase 0: specializes on " + domain.split(",")[0].toLowerCase(),
+      "Phase 1: trained for clean delta composition"
+    ]
   };
-  return map[id] || [];
 }
 
-function updateTau(val) {
-  tau = val / 100;
-  document.getElementById('tauValue').textContent = tau.toFixed(2);
+const panel = document.getElementById("panel");
+const tauSlider = document.getElementById("tauSlider");
+const tauVal = document.getElementById("tauVal");
 
-  // Update tau color
-  const tauEl = document.getElementById('tauValue');
-  if (tau < 0.3) { tauEl.style.color = '#3fb950'; }
-  else if (tau < 0.5) { tauEl.style.color = '#58a6ff'; }
-  else if (tau < 0.7) { tauEl.style.color = '#d29922'; }
-  else { tauEl.style.color = '#f85149'; }
+function showDetail(id) {
+  const d = info[id];
+  if (!d) return;
+  document.querySelectorAll(".node rect").forEach(r => r.classList.remove("sel-ring"));
+  const n = document.querySelector('.node[data-id="'+id+'"]');
+  if (n) { const r = n.querySelector("rect"); if (r) r.classList.add("sel-ring"); }
 
-  // Regime badge
-  const badge = document.getElementById('tauRegime');
-  if (tau < 0.3) { badge.textContent = 'FAST'; badge.className = 'tau-regime regime-fast'; }
-  else if (tau < 0.5) { badge.textContent = 'STANDARD'; badge.className = 'tau-regime regime-standard'; }
-  else if (tau < 0.7) { badge.textContent = 'DEEP'; badge.className = 'tau-regime regime-deep'; }
-  else { badge.textContent = 'FULL DEPTH'; badge.className = 'tau-regime regime-full'; }
+  const tags = d.tags.map(([l,c]) => '<span class="tag '+c+'">'+l+'</span>').join("");
+  const items = d.details.map(x => "<li>"+x+"</li>").join("");
+  panel.innerHTML = '<h2>'+d.title+'</h2><div style="margin:6px 0">'+tags+'</div>'
+    + (d.params ? '<div class="param-count">'+d.params+'</div>' : '')
+    + '<p style="margin-top:10px">'+d.desc+'</p><h3>Details</h3><ul>'+items+'</ul>';
+}
 
-  // Slider track gradient
-  const slider = document.getElementById('tauSlider');
-  const pct = val;
-  slider.style.background = `linear-gradient(90deg, #3fb950 0%, #58a6ff 30%, #d29922 50%, #f85149 70%, #f85149 ${pct}%, #30363d ${pct}%, #30363d 100%)`;
+document.querySelectorAll(".node").forEach(n => {
+  n.addEventListener("click", () => { const id = n.dataset.id; if (id) showDetail(id); });
+});
 
-  // Update strata bars
-  CORTEX_LIST.forEach(c => {
-    const cortexEl = document.getElementById('cortex-' + c.id);
-    const active = c.exampleScore > 0.2;
-    cortexEl.className = 'cortex-node' + (!active ? ' inactive' : '') + (selectedCortex === c.id ? ' selected' : '');
-    STRATA.forEach(s => {
-      const bar = document.getElementById('sb-' + c.id + '-' + s.name);
-      if (bar) bar.style.opacity = (tau >= s.tauMin && active) ? 1 : 0.15;
-    });
+function updateTau(tau) {
+  tauVal.textContent = tau.toFixed(2);
+  const r = Math.round(88 + (248-88)*tau);
+  const g = Math.round(166 + (81-166)*tau);
+  const b = Math.round(255 + (73-255)*tau);
+  tauVal.style.color = "rgb("+r+","+g+","+b+")";
+
+  document.querySelectorAll(".strata-bar").forEach(bar => {
+    const s = bar.dataset.s;
+    const thr = s === "int" ? 0.25 : s === "exp" ? 0.5 : 0.7;
+    bar.style.opacity = tau >= thr ? "1" : "0.15";
   });
-
-  // Bridges
-  const bridgeEl = document.getElementById('node-bridges');
-  if (bridgeEl) {
-    const on = tau >= 0.3;
-    bridgeEl.className = 'bridge-row' + (on ? ' active-bridge' : ' inactive');
-    bridgeEl.innerHTML = `<span>⇌</span> Cross-Cortical Bridges (10 pairs) — ${on ? 'ACTIVE' : 'inactive'} <span style="margin-left:auto;font-size:10px">τ ≥ 0.3</span>`;
-    bridgeEl.onclick = () => selectNode('bridges');
-  }
-
-  // Memory node
-  const memNode = document.getElementById('node-memory');
-  if (memNode) {
-    const on = tau >= 0.5;
-    memNode.className = 'node' + (on ? ' active-glow' : ' inactive') + (selectedId === 'memory' ? ' selected' : '');
-    const badge = memNode.querySelector('.node-badge');
-    if (badge) {
-      badge.style.background = on ? '#3fb95033' : '#f8514933';
-      badge.style.color = on ? '#3fb950' : '#f85149';
-      badge.textContent = (on ? 'ON' : 'OFF') + ' τ≥0.5';
-    }
-  }
-
-  // Loop indicator
-  const loopEl = document.getElementById('loopIndicator');
-  if (loopEl) {
-    const on = tau >= 0.7;
-    loopEl.className = 'loop-indicator' + (on ? ' loop-active' : '');
-    loopEl.innerHTML = `<span class="loop-icon">↻</span> Refinement Loop (max 3) — ${on ? 'ACTIVE' : 'inactive'} <span style="margin-left:auto;font-size:10px">τ ≥ 0.7</span>`;
-  }
-
-  // Refresh detail if showing
-  if (selectedId || selectedCortex) renderDetail();
+  document.querySelectorAll(".arrow.bridge").forEach(a => a.classList.toggle("vis", tau >= 0.3));
+  document.querySelectorAll(".arrow.loop").forEach(a => a.classList.toggle("vis", tau >= 0.7));
+  document.querySelectorAll(".loop-label").forEach(t => t.style.opacity = tau >= 0.7 ? "1" : "0");
 }
 
-// ── Init ──
-buildPipeline();
-document.getElementById('tauSlider').addEventListener('input', e => updateTau(e.target.value));
-updateTau(20);
+tauSlider.addEventListener("input", () => updateTau(parseInt(tauSlider.value)/100));
+updateTau(0.5);
 </script>
 </body>
 </html>
