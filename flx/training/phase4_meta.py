@@ -7,6 +7,8 @@ Self-improvement with full rollback capability.
 
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -16,7 +18,7 @@ from torch.utils.data import DataLoader
 from ..delta import FLXDelta
 from ..meta_gen import MetaDeltaGenerator
 from ..model import FLXNano
-from .utils import EarlyStopState, evaluate_val_loss, save_checkpoint
+from .utils import EarlyStopState, configure_gpu, evaluate_val_loss, save_checkpoint
 
 
 class ErrorBuffer:
@@ -183,10 +185,18 @@ def train_phase4(
     num_epochs: int = 3,
     lr: float = 1e-4,
     buffer_threshold: int = 32,
+    weight_decay: float = 0.01,
     patience: int = 3,
     checkpoint_dir: str | None = None,
+    checkpoint_every: int = 5_000,
+    max_steps: int = 0,
+    resume_from_checkpoint: str | None = None,
+    warmup_steps: int = 500,
+    loss_spike_threshold: float = 3.0,
+    loss_spike_patience: int = 50,
     device: str = "cpu",
     log_every: int = 10,
+    use_amp: bool = True,
 ) -> list[dict[str, float]]:
     """Full Phase 4 training loop.
 
@@ -199,41 +209,91 @@ def train_phase4(
         dataloader: Training data.
         val_dataloader: Validation data for early stopping. If None, uses acceptance rate.
         num_epochs: Training epochs.
-        lr: Learning rate for meta-gen.
+        lr: Peak learning rate (after warmup).
         buffer_threshold: Minimum errors before generating a delta.
+        weight_decay: AdamW weight decay coefficient.
         patience: Early stop after N epochs without improvement.
         checkpoint_dir: If set, save per-epoch checkpoints here.
+        checkpoint_every: Save a checkpoint every N steps (default 5,000).
+        max_steps: Hard cap on total training steps (0 = no cap, use epochs).
+        resume_from_checkpoint: Path to a step checkpoint to resume from.
+        warmup_steps: Linear LR warmup steps before cosine decay.
+        loss_spike_threshold: Halt if meta_loss exceeds this multiple of the
+            running average.
+        loss_spike_patience: Number of consecutive spike steps before halting.
         device: Device.
         log_every: Log interval.
+        use_amp: Enable automatic mixed precision (float16) for GPU training.
 
     Returns:
         Per-step loss history.
     """
+    configure_gpu()
     model = model.to(device)
     meta_gen = meta_gen.to(device)
     model.train()
     meta_gen.train()
 
     # Only train meta-generator in Phase 4
-    optimizer = torch.optim.AdamW(meta_gen.parameters(), lr=lr)
+    optimizer = torch.optim.AdamW(meta_gen.parameters(), lr=lr, weight_decay=weight_decay)
+
+    # Mixed precision: only use on CUDA devices
+    amp_enabled = use_amp and device != "cpu" and torch.cuda.is_available()
+    scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
 
     early_stop = EarlyStopState(
         patience=patience,
         mode="min" if val_dataloader is not None else "max",
     )
+    total_steps = num_epochs * len(dataloader)
+    if max_steps > 0:
+        total_steps = min(total_steps, max_steps)
+
+    # Cosine LR schedule with linear warmup
+    def lr_lambda(current_step: int) -> float:
+        if current_step < warmup_steps:
+            return current_step / max(warmup_steps, 1)
+        progress = (current_step - warmup_steps) / max(total_steps - warmup_steps, 1)
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+    # Resume from checkpoint
+    start_step = 0
+    start_epoch = 0
+    if resume_from_checkpoint is not None:
+        ckpt = torch.load(resume_from_checkpoint, map_location=device, weights_only=False)
+        meta_gen.load_state_dict(ckpt["model_state_dict"])
+        if "optimizer_state_dict" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        start_step = ckpt.get("step", 0)
+        start_epoch = ckpt.get("epoch", 0)
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer, lr_lambda, last_epoch=start_step
+        )
+        print(f"Phase 4 | Resumed from {resume_from_checkpoint} "
+              f"(epoch={start_epoch}, step={start_step})")
+
+    # Loss spike detection state
+    meta_loss_ema = 0.0
+    spike_counter = 0
     error_buffer = ErrorBuffer(max_size=256, d_model=model.d_model)
-    history = []
-    step = 0
+    history: list[dict[str, float]] = []
+
+    step = start_step
     accepted_count = 0
     total_generated = 0
 
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, num_epochs):
         epoch_accepted = 0
         epoch_generated = 0
 
-        for batch in dataloader:
-            input_ids = batch[0].to(device)
-            targets = batch[1].to(device)
+        for batch_idx, batch in enumerate(dataloader):
+            # Skip already-processed batches when resuming mid-epoch
+            if epoch == start_epoch and batch_idx < (start_step % len(dataloader)) and resume_from_checkpoint is not None:
+                continue
+            input_ids = batch[0].to(device, non_blocking=True)
+            targets = batch[1].to(device, non_blocking=True)
 
             # Accumulate errors: run model and check uncertainty
             model.eval()
@@ -256,16 +316,19 @@ def train_phase4(
 
             # Generate delta when buffer is ready
             if error_buffer.ready and len(error_buffer) >= buffer_threshold:
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
 
-                losses = phase4_training_step(
-                    meta_gen, model, error_buffer,
-                    input_ids, targets,
-                )
+                with torch.amp.autocast("cuda", enabled=amp_enabled):
+                    losses = phase4_training_step(
+                        meta_gen, model, error_buffer,
+                        input_ids, targets,
+                    )
 
-                losses["total_loss"].backward()
+                scaler.scale(losses["total_loss"]).backward()
+                scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(meta_gen.parameters(), 1.0)
-                optimizer.step()
+                scaler.step(optimizer)
+                scaler.update()
 
                 total_generated += 1
                 epoch_generated += 1
@@ -279,10 +342,42 @@ def train_phase4(
                         record[k] = v.item()
                     else:
                         record[k] = v
+                record["lr"] = scheduler.get_last_lr()[0]
                 record["epoch"] = epoch
                 record["step"] = step
                 record["acceptance_rate"] = accepted_count / max(total_generated, 1)
                 history.append(record)
+
+                # Loss spike detection on meta_loss
+                meta_val = abs(record.get("meta_loss", 0))
+                if total_generated == 1:
+                    meta_loss_ema = meta_val
+                else:
+                    meta_loss_ema = 0.99 * meta_loss_ema + 0.01 * meta_val
+
+                if meta_loss_ema > 0 and meta_val > loss_spike_threshold * meta_loss_ema:
+                    spike_counter += 1
+                    if spike_counter >= loss_spike_patience:
+                        print(
+                            f"Phase 4 | HALT: loss spike at step {step} "
+                            f"(meta={meta_val:.4f}, ema={meta_loss_ema:.4f}, "
+                            f"ratio={meta_val / meta_loss_ema:.1f}x). "
+                            f"Saving emergency checkpoint."
+                        )
+                        if checkpoint_dir:
+                            save_checkpoint(
+                                meta_gen, f"{checkpoint_dir}/phase4_spike_step{step}.pt", epoch,
+                                {
+                                    "step": step,
+                                    "acceptance_rate": accepted_count / max(total_generated, 1),
+                                    "optimizer_state_dict": optimizer.state_dict(),
+                                    "spike_detected": True,
+                                },
+                            )
+                        early_stop.restore_best(meta_gen)
+                        return history
+                else:
+                    spike_counter = 0
 
                 if step % log_every == 0:
                     print(
@@ -296,7 +391,22 @@ def train_phase4(
                 # Clear buffer after generating
                 error_buffer.clear()
 
+            if checkpoint_dir and checkpoint_every > 0 and step > 0 and step % checkpoint_every == 0:
+                save_checkpoint(
+                    meta_gen, f"{checkpoint_dir}/phase4_step{step}.pt", epoch,
+                    {
+                        "step": step,
+                        "acceptance_rate": accepted_count / max(total_generated, 1),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                    },
+                )
+
+            scheduler.step()
             step += 1
+
+            if max_steps > 0 and step >= max_steps:
+                print(f"Phase 4 | Reached max_steps={max_steps}, stopping.")
+                break
 
         # End of epoch — checkpoint + early stopping
         epoch_rate = epoch_accepted / max(epoch_generated, 1)
@@ -317,6 +427,9 @@ def train_phase4(
 
         if early_stop.check(stop_metric, epoch, meta_gen):
             print(f"Phase 4 | Early stop at epoch {epoch} (patience={patience})")
+            break
+
+        if max_steps > 0 and step >= max_steps:
             break
 
     early_stop.restore_best(meta_gen)

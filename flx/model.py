@@ -464,6 +464,7 @@ class FLXNano(nn.Module):
         self.bridges: nn.ModuleDict | None = None
         self.memory_controller: nn.Module | None = None
         self.meta_generator: nn.Module | None = None
+        self.hypothesis_head: nn.Module | None = None
 
         # Cortex merger + decoder
         self.cortex_merger = CortexMerger(d_model)
@@ -483,6 +484,9 @@ class FLXNano(nn.Module):
 
     def attach_meta_generator(self, meta_gen: nn.Module) -> None:
         self.meta_generator = meta_gen
+
+    def attach_hypothesis_head(self, head: nn.Module) -> None:
+        self.hypothesis_head = head
 
     def forward(
         self,
@@ -544,6 +548,7 @@ class FLXNano(nn.Module):
 
         # 7. Memory controller (retrieval + potential loops)
         if self.memory_controller is not None and episodic_buffer:
+            self.memory_controller.reset_loop_count()
             merged, should_loop = self.memory_controller(
                 merged, episodic_buffer, tau
             )
@@ -605,5 +610,7 @@ class FLXNano(nn.Module):
             counts["memory_controller"] = sum(p.numel() for p in self.memory_controller.parameters())
         if self.meta_generator is not None:
             counts["meta_generator"] = sum(p.numel() for p in self.meta_generator.parameters())
+        if self.hypothesis_head is not None:
+            counts["hypothesis_head"] = sum(p.numel() for p in self.hypothesis_head.parameters())
         counts["total"] = sum(p.numel() for p in self.parameters())
         return counts

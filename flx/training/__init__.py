@@ -1,1 +1,1 @@
-"""FLX training curriculum — Phases 0 through 4."""
+"""FLX training curriculum — Phases 0 through 5."""

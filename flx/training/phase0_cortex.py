@@ -23,7 +23,7 @@ from torch.utils.data import DataLoader
 
 from ..model import FLXNano
 from ..router import ThalamicRouter, diversity_loss, load_balance_loss
-from .utils import EarlyStopState, evaluate_val_loss, save_checkpoint
+from .utils import EarlyStopState, configure_gpu, evaluate_val_loss, save_checkpoint
 
 
 def phase0_training_step(
@@ -122,6 +122,7 @@ def train_phase0(
     max_steps: int = 0,
     resume_from_checkpoint: str | None = None,
     warmup_steps: int = 500,
+    gradient_accumulation_steps: int = 1,
     loss_spike_threshold: float = 3.0,
     loss_spike_patience: int = 50,
     device: str = "cpu",
@@ -150,6 +151,8 @@ def train_phase0(
         max_steps: Hard cap on total training steps (0 = no cap, use epochs).
         resume_from_checkpoint: Path to a step checkpoint to resume from.
         warmup_steps: Linear LR warmup steps before cosine decay.
+        gradient_accumulation_steps: Accumulate gradients over N micro-batches
+            before stepping the optimizer. Effective batch size = batch_size × N.
         loss_spike_threshold: Halt if pred_loss exceeds this multiple of the
             running average (e.g. 3.0 = 3x the recent average).
         loss_spike_patience: Number of consecutive spike steps before halting.
@@ -160,6 +163,7 @@ def train_phase0(
     Returns:
         List of per-step loss dicts.
     """
+    configure_gpu()
     model = model.to(device)
     model.train()
 
@@ -226,14 +230,12 @@ def train_phase0(
             # Skip already-processed batches when resuming mid-epoch
             if epoch == start_epoch and batch_idx < (start_step % len(dataloader)) and resume_from_checkpoint is not None:
                 continue
-            input_ids = batch[0].to(device)
-            targets = batch[1].to(device)
+            input_ids = batch[0].to(device, non_blocking=True)
+            targets = batch[1].to(device, non_blocking=True)
 
             # Anneal λ_bal
             progress = step / max(total_steps - 1, 1)
             lambda_bal = lambda_bal_start + (lambda_bal_end - lambda_bal_start) * progress
-
-            optimizer.zero_grad(set_to_none=True)
 
             with torch.amp.autocast("cuda", enabled=amp_enabled):
                 losses = phase0_training_step(
@@ -244,12 +246,16 @@ def train_phase0(
                     dropout_top_prob=dropout_top_prob,
                 )
 
-            scaler.scale(losses["total_loss"]).backward()
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            scaler.step(optimizer)
-            scaler.update()
-            scheduler.step()
+            scaled_loss = losses["total_loss"] / gradient_accumulation_steps
+            scaler.scale(scaled_loss).backward()
+
+            if (batch_idx + 1) % gradient_accumulation_steps == 0:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
+                scheduler.step()
 
             record = {k: v.item() for k, v in losses.items()}
             record["lambda_bal"] = lambda_bal

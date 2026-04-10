@@ -1,0 +1,1 @@
+phase 1 had no issues to log it trained through without any real issues at all that would have been a concern perfectly 100%

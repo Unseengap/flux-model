@@ -171,12 +171,10 @@ class MemoryController(nn.Module):
         """
         tau_val = tau.mean().item() if isinstance(tau, Tensor) else tau
 
-        # Reset loop count at the start of each forward call (not mid-loop)
-        # so stale state from prior batches doesn't persist.
-        if self._loop_count == 0:
-            pass  # fresh call — no reset needed
-        # Note: callers doing refinement loops will increment _loop_count
-        # via repeated forward() calls within the same batch.
+        # Loop count is reset by the caller (FLXNano.forward) at the
+        # start of each top-level forward pass via reset_loop_count().
+        # Within a refinement loop, repeated forward() calls increment
+        # _loop_count so the max-loop cap is respected.
 
         # Below retrieval threshold — pass through
         if tau_val < self.retrieval_tau_min or len(episodic_buffer) == 0:

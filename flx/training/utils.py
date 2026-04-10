@@ -1,4 +1,4 @@
-"""Training utilities — checkpointing, early stopping, validation."""
+"""Training utilities — checkpointing, early stopping, validation, GPU config."""
 
 from __future__ import annotations
 
@@ -11,6 +11,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, random_split
+
+
+def configure_gpu() -> None:
+    """Enable GPU-specific optimizations. Call once before training.
+
+    - TF32 matmul/cuDNN: ~3x faster on Ampere+ (A100, L4) with negligible precision loss.
+    - cuDNN benchmark: autoselects fastest convolution algorithm for fixed input sizes.
+    """
+    if not torch.cuda.is_available():
+        return
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+    torch.backends.cudnn.benchmark = True
 
 
 @dataclass
@@ -86,6 +99,7 @@ def evaluate_val_loss(
     val_dataloader: DataLoader,
     device: str = "cpu",
     max_batches: int = 0,
+    use_amp: bool = True,
 ) -> float:
     """Compute average cross-entropy loss on a validation set.
 
@@ -94,6 +108,7 @@ def evaluate_val_loss(
         val_dataloader: Validation DataLoader yielding (input_ids, targets).
         device: Device.
         max_batches: Cap evaluation to this many batches (0 = all).
+        use_amp: Use automatic mixed precision during validation.
 
     Returns:
         Average cross-entropy loss over the validation set.
@@ -101,17 +116,19 @@ def evaluate_val_loss(
     model.eval()
     total_loss = 0.0
     total_batches = 0
+    amp_enabled = use_amp and device != "cpu" and torch.cuda.is_available()
 
     for batch in val_dataloader:
-        input_ids = batch[0].to(device)
-        targets = batch[1].to(device)
+        input_ids = batch[0].to(device, non_blocking=True)
+        targets = batch[1].to(device, non_blocking=True)
 
-        logits = model(input_ids)
-        loss = F.cross_entropy(
-            logits.view(-1, logits.size(-1)),
-            targets.view(-1),
-            ignore_index=-100,
-        )
+        with torch.amp.autocast("cuda", enabled=amp_enabled):
+            logits = model(input_ids)
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                targets.view(-1),
+                ignore_index=-100,
+            )
         total_loss += loss.item()
         total_batches += 1
         if max_batches > 0 and total_batches >= max_batches:
