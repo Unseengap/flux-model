@@ -11,6 +11,7 @@ Cortex bases are frozen; train τ estimator, bridges, strata gates.
 from __future__ import annotations
 
 import math
+import warnings
 
 import torch
 import torch.nn as nn
@@ -29,6 +30,7 @@ def phase2_training_step(
     batch_input_ids: Tensor,
     batch_targets: Tensor,
     lambda_compute: float = 0.01,
+    tau_floor: float = 0.3,
 ) -> dict[str, Tensor]:
     """One Phase 2 training step: thermal routing.
 
@@ -37,6 +39,8 @@ def phase2_training_step(
         batch_input_ids: [batch, seq_len]
         batch_targets: [batch, seq_len]
         lambda_compute: Compute cost coefficient.
+        tau_floor: Minimum τ for forward pass. Prevents τ collapse by ensuring
+            intermediate stratum always fires and pred_loss gradient flows.
 
     Returns:
         Dict with pred_loss, compute_cost, total_loss, tau.
@@ -48,7 +52,12 @@ def phase2_training_step(
 
     # 2. Compute τ from input
     tau_tensor = model.thermal_estimator(trunk_output)  # [batch]
-    tau = tau_tensor.mean().item()
+
+    # Soft clamp: floor τ so intermediate stratum always fires.
+    # Uses softplus for smooth gradient near the floor (not hard clamp
+    # which kills gradient when τ < floor).
+    tau_floored = tau_floor + F.softplus(tau_tensor - tau_floor, beta=5.0)
+    tau = tau_floored.mean().item()
 
     # 3. Route
     if model.thalamic_router is not None:
@@ -102,9 +111,12 @@ def phase2_training_step(
         ignore_index=-100,
     )
 
-    # 10. Compute cost (differentiable proxy via τ)
-    # τ is differentiable, so compute_cost must depend on tau_tensor
-    compute_cost = tau_tensor.mean() * (num_strata_active + 0.5 * num_bridges_active)
+    # 10. Compute cost — use tau_floored directly as compute proxy.
+    # Previous version: tau * num_strata_active. This caused a zero-gradient
+    # dead zone: once τ < 0.25, strata=0, so compute_cost=0, gradient=0,
+    # and τ gets trapped. Using tau_floored alone always provides gradient
+    # and is a valid proxy since τ directly determines active compute.
+    compute_cost = tau_floored.mean()
 
     # 11. Dual objective
     total_loss = pred_loss + lambda_compute * compute_cost
@@ -113,7 +125,8 @@ def phase2_training_step(
         "pred_loss": pred_loss,
         "compute_cost": compute_cost,
         "total_loss": total_loss,
-        "tau": tau_tensor.mean(),
+        "tau": tau_floored.mean(),
+        "tau_raw": tau_tensor.mean(),
         "num_strata_active": torch.tensor(float(num_strata_active)),
         "num_bridges_active": torch.tensor(float(num_bridges_active)),
     }
@@ -217,7 +230,9 @@ def train_phase2(
         progress = (current_step - warmup_steps) / max(total_steps - warmup_steps, 1)
         return 0.5 * (1.0 + math.cos(math.pi * progress))
 
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
     # Resume from checkpoint
     start_step = 0
@@ -229,9 +244,11 @@ def train_phase2(
             optimizer.load_state_dict(ckpt["optimizer_state_dict"])
         start_step = ckpt.get("step", 0)
         start_epoch = ckpt.get("epoch", 0)
-        scheduler = torch.optim.lr_scheduler.LambdaLR(
-            optimizer, lr_lambda, last_epoch=start_step
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            scheduler = torch.optim.lr_scheduler.LambdaLR(
+                optimizer, lr_lambda, last_epoch=start_step
+            )
         print(f"Phase 2 | Resumed from {resume_from_checkpoint} "
               f"(epoch={start_epoch}, step={start_step})")
 
@@ -317,6 +334,7 @@ def train_phase2(
                     f"pred={record['pred_loss']:.4f} "
                     f"compute={record['compute_cost']:.4f} "
                     f"τ={record['tau']:.3f} "
+                    f"τ_raw={record.get('tau_raw', 0):.3f} "
                     f"strata={record['num_strata_active']:.0f} "
                     f"bridges={record['num_bridges_active']:.0f}"
                 )
