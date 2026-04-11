@@ -168,9 +168,20 @@ def phase4_training_step(
     # The delta contribution has gradient w.r.t. meta-gen parameters.
     # Use improvement as the reward signal (REINFORCE).
     delta_contribution = A_grad[0].norm() + B_grad[0].norm()
-    reward = improvement.detach()
+
+    # Scale reward relative to loss_before so small absolute gains
+    # (e.g. 0.0001 on loss=3.5) become meaningful percentage signals.
+    raw_reward = improvement.detach()
+    scaled_reward = raw_reward / (loss_before.detach().clamp(min=0.1))
+
     reg_weight = 0.001
-    meta_loss = -reward * delta_contribution + reg_weight * delta_contribution
+    meta_loss = -scaled_reward * delta_contribution + reg_weight * delta_contribution
+
+    # Cortex entropy bonus — encourage exploration across all cortices
+    cortex_probs = F.softmax(metadata_grad["cortex_logits"][0], dim=-1)
+    cortex_entropy = -(cortex_probs * (cortex_probs + 1e-10).log()).sum()
+    entropy_weight = 0.1
+    meta_loss = meta_loss - entropy_weight * cortex_entropy
 
     return {
         "meta_loss": meta_loss,
@@ -181,6 +192,7 @@ def phase4_training_step(
         "accepted": torch.tensor(float(accepted)),
         "target_cortex": cortex_name,
         "target_stratum": stratum_name,
+        "cortex_entropy": cortex_entropy,
     }
 
 
