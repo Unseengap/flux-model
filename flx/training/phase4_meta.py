@@ -240,8 +240,12 @@ def train_phase4(
     meta_gen = meta_gen.to(device)
 
     # Freeze all model weights — Phase 4 only trains meta_gen
+    # Note: meta_gen is a submodule of model (via attach_meta_generator),
+    # so we must re-enable its gradients after the blanket freeze.
     for param in model.parameters():
         param.requires_grad = False
+    for param in meta_gen.parameters():
+        param.requires_grad = True
 
     model.train()
     meta_gen.train()
@@ -299,6 +303,7 @@ def train_phase4(
     step = start_step
     accepted_count = 0
     total_generated = 0
+    optimizer_stepped = start_step > 0  # Track if optimizer has stepped (for scheduler)
 
     for epoch in range(start_epoch, num_epochs):
         epoch_accepted = 0
@@ -345,6 +350,7 @@ def train_phase4(
                 torch.nn.utils.clip_grad_norm_(meta_gen.parameters(), 1.0)
                 scaler.step(optimizer)
                 scaler.update()
+                optimizer_stepped = True
 
                 total_generated += 1
                 epoch_generated += 1
@@ -417,7 +423,8 @@ def train_phase4(
                     },
                 )
 
-            scheduler.step()
+            if optimizer_stepped:
+                scheduler.step()
             step += 1
 
             if max_steps > 0 and step >= max_steps:
