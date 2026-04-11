@@ -64,9 +64,11 @@ def phase5_training_step(
     test_target: Tensor,
     tau: float = 0.8,
     max_loops: int = 3,
+    min_loops: int = 1,
     consistency_threshold: float = 0.85,
     lambda_cons: float = 0.3,
     lambda_loop: float = 0.01,
+    lambda_cal: float = 0.2,
 ) -> dict[str, Tensor]:
     """One Phase 5 training step: few-shot rule induction.
 
@@ -84,13 +86,15 @@ def phase5_training_step(
         test_target: [batch, seq] test target.
         tau: Thermal level (fixed high for few-shot tasks).
         max_loops: Maximum hypothesis refinement loops.
+        min_loops: Minimum loops before consistency can stop early.
         consistency_threshold: Stop looping above this consistency.
         lambda_cons: Weight for consistency loss.
         lambda_loop: Weight for loop efficiency loss.
+        lambda_cal: Weight for calibration loss (penalise overconfidence).
 
     Returns:
-        Dict with pred_loss, consistency_loss, total_loss, consistency,
-        num_loops.
+        Dict with pred_loss, consistency_loss, calibration_loss,
+        total_loss, consistency, num_loops.
     """
     assert model.memory_controller is not None, (
         "Phase 5 requires memory controller (Phase 3 must be complete)"
@@ -183,12 +187,13 @@ def phase5_training_step(
         # Record in scratchpad
         scratchpad.add_hypothesis(hypothesis, cons_score.mean().item())
 
-        # Check stopping condition
-        if cons_score.mean().item() >= consistency_threshold:
-            break
+        # Check stopping condition (enforce min_loops first)
+        if loop_idx >= min_loops:
+            if cons_score.mean().item() >= consistency_threshold:
+                break
+            if not should_loop:
+                break
         if loop_idx >= max_loops:
-            break
-        if not should_loop:
             break
 
         # Re-merge for next iteration (with conditioning from hypothesis)
@@ -210,11 +215,21 @@ def phase5_training_step(
     cons_loss = consistency_loss(final_consistency)
     eff_loss = loop_efficiency_loss(num_loops, max_loops)
 
-    total_loss = pred_loss + lambda_cons * cons_loss + lambda_loop * eff_loss
+    # Calibration: penalise high consistency when prediction is poor.
+    # Gradient flows only through consistency (pred_loss is detached).
+    cal_loss = (final_consistency * pred_loss.detach()).mean()
+
+    total_loss = (
+        pred_loss
+        + lambda_cons * cons_loss
+        + lambda_loop * eff_loss
+        + lambda_cal * cal_loss
+    )
 
     return {
         "pred_loss": pred_loss,
         "consistency_loss": cons_loss,
+        "calibration_loss": cal_loss,
         "loop_efficiency_loss": eff_loss,
         "total_loss": total_loss,
         "consistency": final_consistency.mean().detach(),
@@ -237,9 +252,11 @@ def train_phase5(
     finetune_lr: float = 1e-5,
     tau: float = 0.8,
     max_loops: int = 3,
+    min_loops: int = 1,
     consistency_threshold: float = 0.85,
     lambda_cons: float = 0.3,
     lambda_loop: float = 0.01,
+    lambda_cal: float = 0.2,
     patience: int = 5,
     checkpoint_dir: str | None = None,
     device: str = "cpu",
@@ -335,9 +352,11 @@ def train_phase5(
                 test_input, test_target,
                 tau=tau,
                 max_loops=max_loops,
+                min_loops=min_loops,
                 consistency_threshold=consistency_threshold,
                 lambda_cons=lambda_cons,
                 lambda_loop=lambda_loop,
+                lambda_cal=lambda_cal,
             )
 
             losses["total_loss"].backward()
