@@ -89,13 +89,12 @@ def phase2_training_step(
     if model.bridges is not None and tau >= 0.3:
         active_names = list(cortex_outputs.keys())
         for bridge_key, bridge in model.bridges.items():
-            parts = bridge_key.split("_", 1)
-            if len(parts) == 2:
-                src, tgt = parts
-                if src in active_names and tgt in active_names:
-                    contrib = bridge(cortex_outputs[src], tau)
-                    cortex_outputs[tgt] = cortex_outputs[tgt] + contrib
-                    num_bridges_active += 1
+            src = bridge.source_cortex
+            tgt = bridge.target_cortex
+            if src in active_names and tgt in active_names:
+                contrib = bridge(cortex_outputs[src], tau)
+                cortex_outputs[tgt] = cortex_outputs[tgt] + contrib
+                num_bridges_active += 1
 
     # 6. Merge
     merged = model.cortex_merger(cortex_outputs, domain_scores, trunk_output)
