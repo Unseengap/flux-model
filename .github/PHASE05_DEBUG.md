@@ -7,9 +7,9 @@ Phase 5 trains a HypothesisHead to induce abstract transformation rules from a h
 ## What "working" looks like
 
 - `pred_loss`: Should decrease steadily from ~15 → below 1.0. This is the primary objective — predicting test outputs.
-- `consistency`: Should rise **gradually** — 0.5 → 0.7 → 0.85+ over hundreds of steps. Measures how well the hypothesis explains the demo pairs.
+- `consistency`: Should rise **gradually** — 0.3 → 0.5 → 0.7+ over hundreds of steps as predictions improve. Tracks exp(-pred_loss/2).
+- `cons_target`: Supervised target for consistency, = exp(-pred_loss/2). Shows what consistency *should* be given current prediction quality.
 - `loops`: Should average **1–2** during training. 0 = refinement loop is dead (consistency gate too easy). 3 = model can't converge on a good hypothesis.
-- `calibration_loss`: Should decrease alongside pred_loss. High calibration loss = consistency is high while predictions are poor (overconfidence).
 
 ## Problem History
 
