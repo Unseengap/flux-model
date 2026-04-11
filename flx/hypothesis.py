@@ -127,8 +127,10 @@ class HypothesisHead(nn.Module):
             hypothesis = hypothesis + self.trajectory_gate(combined)
 
         # Consistency score: sigmoid → (0, 1)
+        # Detach hypothesis so prediction-loss gradients don't distort
+        # the consistency head's calibration (prevents anti-correlation).
         consistency = torch.sigmoid(
-            self.consistency_head(hypothesis).squeeze(-1)
+            self.consistency_head(hypothesis.detach()).squeeze(-1)
         )  # [batch]
 
         # Decoder conditioning: project hypothesis back to d_model

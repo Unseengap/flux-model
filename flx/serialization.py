@@ -84,6 +84,7 @@ def save_flx(
             "domain": name,
             "strata": list(cortex.strata.keys()),
             "d_model": model.d_model,
+            "internal_dim": cortex.internal_dim,
         }
 
         # Cortex-level weights (difficulty_gate etc.)
@@ -238,6 +239,14 @@ def save_flx(
         "has_memory": model.memory_controller is not None,
         "has_meta_gen": model.meta_generator is not None,
     }
+    # Per-cortex internal dimensions (only non-default entries)
+    cortex_dims = {
+        name: cortex.internal_dim
+        for name, cortex in model.cortices.items()
+        if cortex.internal_dim != model.d_model
+    }
+    if cortex_dims:
+        manifest["cortex_dims"] = cortex_dims
     if model.memory_controller is not None:
         manifest["episode_dim"] = model.memory_controller.query_head.out_features
     with open(path / "manifest.yaml", "w") as f:
@@ -269,6 +278,7 @@ def load_flx(
     trunk_cfg = manifest["shared_trunk"]
     d_model = trunk_cfg["d_model"]
     delta_rank = manifest.get("delta_rank", 32)
+    cortex_dims = manifest.get("cortex_dims", {})
 
     # --- Create Model ---
     model = FLXNano(
@@ -278,6 +288,7 @@ def load_flx(
         trunk_layers=trunk_cfg.get("trunk_layers", 6),
         layers_per_stratum=manifest.get("layers_per_stratum", 2),
         cortex_names=cortex_names,
+        cortex_dims=cortex_dims,
         delta_rank=delta_rank,
         delta_capacity=manifest.get("delta_capacity", 3),
         max_seq_len=trunk_cfg.get("max_seq_len", 2048),

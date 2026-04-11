@@ -228,9 +228,14 @@ class DomainCortex(nn.Module):
     Contains intermediate, expert, and frontier strata.
     Basic stratum is the SharedTrunk (not duplicated per cortex).
 
+    When internal_dim differs from d_model, adapter projections translate
+    between the trunk's dimension and the cortex's native dimension.
+
     Args:
         domain_id: Domain name identifier.
-        d_model: Model dimension.
+        d_model: Model dimension (trunk output dimension).
+        internal_dim: Internal dimension for this cortex's strata.
+            If None or equal to d_model, no adapters are created.
         nhead: Number of attention heads.
         layers_per_stratum: Transformer layers per stratum.
         delta_capacity: Delta slots per stratum.
@@ -242,6 +247,7 @@ class DomainCortex(nn.Module):
         self,
         domain_id: str,
         d_model: int = 512,
+        internal_dim: int | None = None,
         nhead: int = 8,
         layers_per_stratum: int = 2,
         delta_capacity: int = 3,
@@ -250,27 +256,37 @@ class DomainCortex(nn.Module):
     ):
         super().__init__()
         self.domain_id = domain_id
+        self.d_model = d_model
+        self.internal_dim = internal_dim or d_model
+
+        # Adapter projections (only if dimensions differ)
+        if self.internal_dim != d_model:
+            self.proj_in = nn.Linear(d_model, self.internal_dim)
+            self.proj_out = nn.Linear(self.internal_dim, d_model)
+        else:
+            self.proj_in = nn.Identity()
+            self.proj_out = nn.Identity()
 
         self.strata = nn.ModuleDict({
             "intermediate": Stratum(
-                d_model, nhead, layers_per_stratum,
+                self.internal_dim, nhead, layers_per_stratum,
                 depth="intermediate", delta_capacity=delta_capacity,
                 dim_feedforward=dim_feedforward, dropout=dropout,
             ),
             "expert": Stratum(
-                d_model, nhead, layers_per_stratum,
+                self.internal_dim, nhead, layers_per_stratum,
                 depth="expert", delta_capacity=delta_capacity,
                 dim_feedforward=dim_feedforward, dropout=dropout,
             ),
             "frontier": Stratum(
-                d_model, nhead, layers_per_stratum,
+                self.internal_dim, nhead, layers_per_stratum,
                 depth="frontier", delta_capacity=delta_capacity,
                 dim_feedforward=dim_feedforward, dropout=dropout,
             ),
         })
 
         # Difficulty gate: determines stratum weighting given input
-        self.difficulty_gate = nn.Linear(d_model, len(self.strata))
+        self.difficulty_gate = nn.Linear(self.internal_dim, len(self.strata))
 
     def forward(self, x: Tensor, tau: float) -> Tensor:
         """Forward through active strata, weighted by difficulty gate.
@@ -282,17 +298,21 @@ class DomainCortex(nn.Module):
         Returns:
             Cortex output: [batch, seq, d_model]
         """
-        # Compute stratum weights from input mean
-        stratum_weights = F.softmax(self.difficulty_gate(x.mean(dim=1)), dim=-1)
+        # Project to internal dimension
+        x_internal = self.proj_in(x)  # [batch, seq, internal_dim]
 
-        out = torch.zeros_like(x)
+        # Compute stratum weights from input mean
+        stratum_weights = F.softmax(self.difficulty_gate(x_internal.mean(dim=1)), dim=-1)
+
+        out = torch.zeros_like(x_internal)
         for i, (name, stratum) in enumerate(self.strata.items()):
             weight = stratum_weights[:, i]  # [batch]
             if tau >= stratum.tau_min and (weight > 0.1).any():
-                stratum_out = stratum(x, tau)  # [batch, seq, d_model]
+                stratum_out = stratum(x_internal, tau)  # [batch, seq, internal_dim]
                 out = out + weight.unsqueeze(-1).unsqueeze(-1) * stratum_out
 
-        return out
+        # Project back to d_model
+        return self.proj_out(out)
 
     def stratum_names(self) -> list[str]:
         return list(self.strata.keys())
@@ -405,6 +425,9 @@ class FLXNano(nn.Module):
         trunk_layers: Transformer layers in shared trunk.
         layers_per_stratum: Transformer layers per cortex stratum.
         cortex_names: Domain cortex identifiers.
+        cortex_dims: Per-cortex internal dimensions, e.g. {"math": 1536}.
+            Cortices not listed use d_model. Enables dimension-agnostic
+            cortices for transplanting donor model layers.
         delta_rank: Rank for delta decomposition.
         delta_capacity: Delta slots per stratum.
         max_seq_len: Maximum sequence length.
@@ -420,6 +443,7 @@ class FLXNano(nn.Module):
         trunk_layers: int = 6,
         layers_per_stratum: int = 2,
         cortex_names: list[str] | None = None,
+        cortex_dims: dict[str, int] | None = None,
         delta_rank: int = 32,
         delta_capacity: int = 8,
         max_seq_len: int = 2048,
@@ -430,6 +454,7 @@ class FLXNano(nn.Module):
         self.d_model = d_model
         self.delta_rank = delta_rank
         self.cortex_names = cortex_names or DEFAULT_CORTEX_NAMES
+        self.cortex_dims = cortex_dims or {}
 
         # Shared trunk (canonizer + embedder + basic stratum)
         self.shared_trunk = SharedTrunk(
@@ -447,6 +472,7 @@ class FLXNano(nn.Module):
             name: DomainCortex(
                 domain_id=name,
                 d_model=d_model,
+                internal_dim=self.cortex_dims.get(name),
                 nhead=nhead,
                 layers_per_stratum=layers_per_stratum,
                 delta_capacity=delta_capacity,
