@@ -31,6 +31,7 @@ def phase2_training_step(
     batch_targets: Tensor,
     lambda_compute: float = 0.01,
     tau_floor: float = 0.3,
+    pred_loss_ema: float = 0.0,
 ) -> dict[str, Tensor]:
     """One Phase 2 training step: thermal routing.
 
@@ -41,6 +42,9 @@ def phase2_training_step(
         lambda_compute: Compute cost coefficient.
         tau_floor: Minimum τ for forward pass. Prevents τ collapse by ensuring
             intermediate stratum always fires and pred_loss gradient flows.
+        pred_loss_ema: Running mean of pred_loss from the training loop.
+            Used to compute per-batch difficulty for the bidirectional τ target.
+            Pass 0.0 on the first step (uses default target of 0.5).
 
     Returns:
         Dict with pred_loss, compute_cost, total_loss, tau.
@@ -111,12 +115,18 @@ def phase2_training_step(
         ignore_index=-100,
     )
 
-    # 10. Compute cost — use tau_floored directly as compute proxy.
-    # Previous version: tau * num_strata_active. This caused a zero-gradient
-    # dead zone: once τ < 0.25, strata=0, so compute_cost=0, gradient=0,
-    # and τ gets trapped. Using tau_floored alone always provides gradient
-    # and is a valid proxy since τ directly determines active compute.
-    compute_cost = tau_floored.mean()
+    # 10. Difficulty-responsive compute cost (bidirectional τ target).
+    # v1: tau * num_strata → zero-gradient dead zone when strata=0.
+    # v2: tau_floored alone → unidirectional, drives τ_raw → 0.
+    # v3 (current): τ target tracks input difficulty via pred_loss vs EMA.
+    # Hard batches (pred_loss > EMA) → high target → pushes τ UP.
+    # Easy batches (pred_loss < EMA) → low target → pushes τ DOWN.
+    if pred_loss_ema > 0:
+        difficulty = torch.sigmoid(5.0 * (pred_loss.detach() - pred_loss_ema))
+    else:
+        difficulty = torch.tensor(0.5, device=pred_loss.device)
+    tau_target = 0.3 + 0.4 * difficulty  # range [0.3, 0.7]
+    compute_cost = (tau_floored.mean() - tau_target) ** 2
 
     # 11. Dual objective
     total_loss = pred_loss + lambda_compute * compute_cost
@@ -127,6 +137,7 @@ def phase2_training_step(
         "total_loss": total_loss,
         "tau": tau_floored.mean(),
         "tau_raw": tau_tensor.mean(),
+        "tau_target": tau_target,
         "num_strata_active": torch.tensor(float(num_strata_active)),
         "num_bridges_active": torch.tensor(float(num_bridges_active)),
     }
@@ -271,7 +282,9 @@ def train_phase2(
 
             with torch.amp.autocast("cuda", enabled=amp_enabled):
                 losses = phase2_training_step(
-                    model, input_ids, targets, lambda_compute=lambda_compute
+                    model, input_ids, targets,
+                    lambda_compute=lambda_compute,
+                    pred_loss_ema=pred_loss_ema,
                 )
 
             scaled_loss = losses["total_loss"] / gradient_accumulation_steps
@@ -335,6 +348,7 @@ def train_phase2(
                     f"compute={record['compute_cost']:.4f} "
                     f"τ={record['tau']:.3f} "
                     f"τ_raw={record.get('tau_raw', 0):.3f} "
+                    f"τ_tgt={record.get('tau_target', 0):.3f} "
                     f"strata={record['num_strata_active']:.0f} "
                     f"bridges={record['num_bridges_active']:.0f}"
                 )

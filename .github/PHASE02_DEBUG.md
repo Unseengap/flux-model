@@ -53,7 +53,7 @@ step=2600 | pred=4.2324 compute=0.0000 τ=0.212 strata=0 bridges=0
 
 Also had scheduler warning: `lr_scheduler.step()` called before `optimizer.step()` on init (PyTorch LambdaLR calls step() internally during `__init__`).
 
-### Attempt 2: Soft τ floor + simplified compute cost (CURRENT)
+### Attempt 2: Soft τ floor + simplified compute cost (FAILED — τ_raw → 0)
 
 **File**: `flx/training/phase2_thermal.py` — `phase2_training_step()`
 
@@ -68,37 +68,92 @@ tau = tau_floored.mean().item()  # used for stratum gating
 compute_cost = tau_floored.mean()
 ```
 
-**Why this fixes the zero-gradient problem**:
+**What it fixed**: Strata no longer go to 0 — intermediate stratum always fires (strata=3-5). Soft floor works correctly.
 
-1. **Soft floor via softplus**: `softplus(x, beta=5)` ≈ `max(x, 0)` but smooth. When `tau_tensor < 0.3`, `tau_floored ≈ 0.3` with small gradient still flowing back to the thermal estimator. When `tau_tensor > 0.3`, `tau_floored ≈ tau_tensor` (gradient ≈ 1.0). Intermediate stratum (τ_min=0.25) **always fires** because tau_floored ≥ 0.3.
+**Why it still failed**: `compute_cost = tau_floored.mean()` is **unidirectional** — gradient always pushes τ down. And `pred_loss` has **zero gradient on τ** because `.item()` breaks the computation graph:
 
-2. **Simplified compute cost**: `compute_cost = tau_floored.mean()` always provides gradient. No multiplication by `num_strata_active` that goes to zero. τ IS the compute proxy — higher τ causes more strata to fire, so penalizing τ directly achieves the same efficiency pressure.
+```python
+tau = tau_floored.mean().item()  # ← .item() detaches from graph
+# τ enters the forward pass as a plain float, not a tensor
+# pred_loss has NO gradient path back to the thermal estimator
+```
 
-**Why softplus instead of hard clamp**: `torch.clamp(tau, min=0.3)` has zero gradient when `tau < 0.3`, which would trap the thermal estimator's parameters. Softplus provides a smooth gradient everywhere.
+So the thermal estimator receives exactly one gradient signal: "make τ smaller". It obediently drives τ_raw → 0. The soft floor catches it at τ_floored ≈ 0.34, but the thermal estimator has learned **nothing** — it just minimizes τ.
 
-Also fixed scheduler warning by wrapping `LambdaLR()` creation in `warnings.catch_warnings()`.
+**Training evidence** (τ_raw driven to 0, τ stuck at floor):
+```
+step=0    | pred=3.7501 compute=0.4698 τ=0.470 τ_raw=0.358
+step=500  | pred=3.4160 compute=0.3474 τ=0.347 τ_raw=0.036
+step=1000 | pred=3.3687 compute=0.3415 τ=0.341 τ_raw=0.007
+step=2000 | pred=3.2588 compute=0.3405 τ=0.340 τ_raw=0.001
+step=3200 | pred=3.3407 compute=0.3403 τ=0.340 τ_raw=0.000  ← thermal estimator dead
+```
 
-**Expected behavior**:
-| Scenario | tau_raw | tau_floored | compute_cost | strata |
-|---|---|---|---|---|
-| Easy text, model learns low τ | 0.15 | ~0.30 | ~0.30 | 5 (intermediate only) |
-| Medium text | 0.45 | ~0.45 | ~0.45 | 10 (intermediate + expert) |
-| Hard text | 0.75 | ~0.75 | ~0.75 | 15 (all strata) |
-| τ collapse attempt | 0.01 | ~0.30 | ~0.30 | 5 (floor prevents collapse) |
+**Key: bridges=0 throughout** — bridges need the model to explore higher τ, which never happens because the only gradient signal says "go lower".
+
+### Attempt 3: Difficulty-responsive τ target (CURRENT)
+
+**File**: `flx/training/phase2_thermal.py` — `phase2_training_step()`
+
+Core insight: since `pred_loss` can't provide gradient on τ (graph broken by `.item()`), the compute_cost term is the ONLY gradient source. It must be **bidirectional** — push τ up for hard batches, down for easy ones.
+
+```python
+# Use pred_loss relative to running EMA as difficulty proxy
+if pred_loss_ema > 0:
+    difficulty = torch.sigmoid(5.0 * (pred_loss.detach() - pred_loss_ema))
+else:
+    difficulty = torch.tensor(0.5, device=pred_loss.device)
+
+tau_target = 0.3 + 0.4 * difficulty  # range [0.3, 0.7]
+compute_cost = (tau_floored.mean() - tau_target) ** 2
+```
+
+**How it works**:
+
+1. **difficulty signal**: `sigmoid(5 * (pred_loss - EMA))`. When a batch has higher-than-average loss (hard), difficulty → 1. When lower-than-average (easy), difficulty → 0. The sigmoid sensitivity of 5 means ±0.5 around baseline gives difficulty ≈ [0.08, 0.92].
+
+2. **tau_target**: Maps difficulty to [0.3, 0.7]. Easy → 0.3 (only intermediate strata), hard → 0.7 (all strata + frontier).
+
+3. **Squared loss**: `(tau - target)^2` provides **bidirectional gradient**:
+   - `tau < target` (hard batch, need more compute): gradient pushes τ UP
+   - `tau > target` (easy batch, wasting compute): gradient pushes τ DOWN
+
+4. **EMA baseline** adapts as training progresses — the "average difficulty" shifts naturally.
+
+**Gradient analysis at key points**:
+| Batch type | pred_loss | difficulty | tau_target | If τ=0.35 | gradient direction |
+|---|---|---|---|---|---|
+| Easy | 2.8 (< EMA 3.5) | 0.03 | 0.31 | τ > target | push DOWN ↓ |
+| Average | 3.5 (= EMA) | 0.50 | 0.50 | τ < target | push UP ↑ |
+| Hard | 4.2 (> EMA) | 0.97 | 0.69 | τ < target | push UP ↑ |
+
+The thermal estimator now gets a meaningful learning signal: "output high τ when the input will be hard to predict". This is exactly what Phase 2 is supposed to teach.
+
+**Expected trajectory**:
+- Steps 0–500: τ_raw rises from ~0 toward 0.3–0.5 as compute_cost pushes up toward targets
+- Steps 500–2000: τ starts varying per-batch (easy ~0.3, hard ~0.6), strata count varies
+- Steps 2000+: Expert strata (τ>0.5) fire on hard batches, bridges may activate
+- τ_tgt should fluctuate between 0.3–0.7 showing the difficulty signal is active
+
+**Log format updated**: Now shows `τ_tgt` alongside `τ` and `τ_raw`.
 
 ## Files Modified
 
 | File | What changed |
 |---|---|
-| `flx/training/phase2_thermal.py` | `phase2_training_step()`: Added `tau_floor` param, soft floor via `F.softplus`, simplified `compute_cost`, added `tau_raw` to output dict |
-| `flx/training/phase2_thermal.py` | `train_phase2()`: Suppressed LambdaLR scheduler init warning |
-| `flx/training/phase2_thermal.py` | Log line: Added `τ_raw` field for debugging |
+| `flx/training/phase2_thermal.py` | `phase2_training_step()`: Added `tau_floor` param + softplus floor (Attempt 2), then `pred_loss_ema` param + difficulty-responsive `tau_target` + squared compute_cost (Attempt 3). Returns `tau_raw` and `tau_target` for debugging. |
+| `flx/training/phase2_thermal.py` | `train_phase2()`: Passes `pred_loss_ema` to training step. Suppressed LambdaLR scheduler init warning. Log line shows `τ_raw` and `τ_tgt`. |
 
 ## Key Insights
 
-**Same pattern as Phase 0**: Hard gating creates zero-gradient dead zones. In Phase 0 it was routing scores → 0 (bypass collapse). In Phase 2 it's τ → 0 (thermal collapse). Any time a differentiable signal gates discrete components via hard thresholds, the training loss must provide gradient EVEN WHEN the signal is below all thresholds.
+**Three gradient traps in one module**: Phase 2 exposed three separate zero/unidirectional gradient problems:
+1. `tau * num_strata` → zero gradient when strata=0 (Attempt 1)
+2. `tau_floored.mean()` → unidirectional, always pushes τ down (Attempt 2)
+3. `.item()` breaks the computation graph → pred_loss has zero gradient on τ (discovered in Attempt 2)
 
-**compute_cost must always have gradient**: The original `tau * num_strata` looked correct but created a trap. When designing efficiency penalties for gated systems, the penalty should depend on the continuous control signal (τ), not on the discrete outcome (strata count) which can zero out.
+**When the graph is broken, make the surrogate loss bidirectional**: If you can't get gradient from the primary loss (pred_loss) through a control variable (τ), the auxiliary loss (compute_cost) is the ONLY gradient source. A unidirectional auxiliary loss will always drive the control variable to one extreme. Use a **target-based** loss that pushes both up and down.
+
+**Difficulty-responsive targets are a form of reward shaping**: The `pred_loss vs EMA` signal is essentially telling the thermal estimator "you should have allocated more compute to this batch" (when loss > EMA) or "you wasted compute" (when loss < EMA). This is similar to REINFORCE with a baseline, but using L2 to a target instead of policy gradients.
 
 **Softplus > clamp for floors**: `clamp(x, min=v)` has zero gradient below `v`. `v + softplus(x - v)` has non-zero gradient everywhere. Use softplus when you need a floor but still want the model to learn from below-floor signals.
 
@@ -106,20 +161,24 @@ Also fixed scheduler warning by wrapping `LambdaLR()` creation in `warnings.catc
 
 ### Diagnosis checklist
 
-1. **τ still stuck at 0.3 (floor), strata=5 only**: Compute pressure is too strong relative to pred_loss improvement from higher strata. Reduce `lambda_compute` from 0.01 to 0.001.
+1. **τ_raw stays near 0, τ stuck at floor (~0.34)**: The difficulty signal may be too weak. Increase `lambda_compute` from 0.01 to 0.05 or 0.1. The squared loss `(tau-target)^2` is small, so larger λ is needed to drive meaningful updates.
 
-2. **τ goes to 1.0 for everything (no efficiency)**: Compute pressure too weak. Increase `lambda_compute` to 0.05 or 0.1.
+2. **τ tracks τ_tgt but τ_tgt doesn't vary much**: All batches have similar pred_loss (no easy/hard distinction). The training data may lack difficulty diversity. Check that the dataset includes both simple and complex text.
 
-3. **τ varies but pred_loss doesn't improve**: Bridges may not be connecting. Check bridge key parsing (underscore-separated cortex names). Verify bridges are in the trainable params.
+3. **τ goes to 0.7 for everything (no efficiency)**: Either lambda_compute is too high driving τ to always match the max target, or the EMA baseline is stale. The EMA decay (0.99) may be too slow — try 0.95 for faster adaptation.
 
-4. **pred_loss increases significantly**: Frozen cortex weights may be incompatible with thermal gating. Try unfreezing cortex layers at lower LR.
+4. **Bridges still = 0**: Check that `model.bridges` is not None. Bridge keys use `source_target` format — verify `build_bridges()` was called and bridges attached. Bridges need τ ≥ 0.3 AND both source and target cortices active.
 
-5. **Gradient norm is zero for thermal estimator**: Check `model.thermal_estimator.parameters()` are in the trainable params list and `requires_grad=True`.
+5. **pred_loss doesn't improve despite τ varying**: Expert/frontier strata may have poor weights from Phase 0 (if Phase 0 used a fixed low τ). Check what τ was used during Phase 0 training.
 
-### Alternative approaches
+6. **Gradient norm is zero for thermal estimator**: Check `model.thermal_estimator.parameters()` are in the trainable params list and `requires_grad=True`.
 
-1. **Gumbel-Softmax strata gating**: Replace hard τ thresholds with Gumbel-Softmax to make gating fully differentiable.
+### Alternative approaches (if difficulty-responsive target fails)
 
-2. **τ entropy regularization**: Add `- H(τ distribution across batch)` to encourage variance in τ values (easy vs hard inputs should get different τ).
+1. **Straight-Through Estimator (STE)**: Pass τ as a tensor (not `.item()`) through the forward pass. Use STE for hard strata gating: forward uses hard gate, backward pretends it was sigmoid. This makes pred_loss provide gradient on τ directly. Requires model changes.
 
-3. **Curriculum on λ_compute**: Start with λ_compute=0 (learn quality first), then anneal up to 0.01 (add efficiency pressure after τ knows what helps quality).
+2. **REINFORCE / policy gradient**: Treat τ as a policy action. Use `reward = -pred_loss.detach()` with a baseline. `tau_loss = -reward * log_pi(tau)`. Works without differentiable gating but has high variance.
+
+3. **Gumbel-Softmax strata gating**: Replace hard τ thresholds with Gumbel-Softmax to make gating fully differentiable. Most principled but largest code change.
+
+4. **Curriculum on λ_compute**: Start with λ_compute=0 for first 2000 steps (let pred_loss gradient explore, if using STE), then anneal up to add efficiency pressure.
