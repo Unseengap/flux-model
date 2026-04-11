@@ -137,6 +137,52 @@ The thermal estimator now gets a meaningful learning signal: "output high τ whe
 
 **Log format updated**: Now shows `τ_tgt` alongside `τ` and `τ_raw`.
 
+### Bug fix: Bridges always = 0 (key format mismatch)
+
+Discovered after Attempt 3 showed τ working but bridges=0 despite τ > 0.3.
+
+**Root cause**: `build_bridges()` in `flx/bridges.py` uses `→` as the key separator (`"language→math"`), but `phase2_training_step()` was parsing keys with `bridge_key.split("_", 1)` expecting `"language_math"`. Every bridge was silently skipped because `split("_", 1)` on `"language→math"` returns a single-element list.
+
+**Fix**: Replaced key parsing with direct attribute access:
+```python
+# Before (broken):
+parts = bridge_key.split("_", 1)
+if len(parts) == 2:
+    src, tgt = parts
+
+# After (fixed):
+src = bridge.source_cortex
+tgt = bridge.target_cortex
+```
+
+Bridge counts after fix: 6 (3 cortices active), 12 (4 cortices), 20 (all 5 cortices).
+
+## Training Outcome — CONVERGED at ~4k steps, stopped at 10k
+
+**Config**: `num_epochs=5, lr=3e-5, patience=3, max_steps=25_000, checkpoint_every=5_000`
+
+Attempt 3 + bridge fix produced healthy training. Key metrics from the final run:
+
+```
+step=0    | pred=3.5154 τ=0.455 τ_raw=0.332 τ_tgt=0.500 strata=4  bridges=12
+step=600  | pred=3.5213 τ=0.543 τ_raw=0.471 τ_tgt=0.512 strata=10 bridges=20
+step=1000 | pred=2.9771 τ=0.493 τ_raw=0.391 τ_tgt=0.334 strata=5  bridges=20
+step=2100 | pred=3.4268 τ=0.527 τ_raw=0.441 τ_tgt=0.465 strata=10 bridges=20
+step=4000 | pred=3.6824 τ=0.510 τ_raw=0.413 τ_tgt=0.608 strata=8  bridges=12
+```
+
+**Why it converged**: Phase 2's trainable params (thermal estimator, bridges, strata confidences, difficulty gates) have small capacity. By ~4k steps:
+- τ varies with difficulty (0.45–0.54), not stuck at a single value
+- τ_tgt fluctuates 0.30–0.70, showing the difficulty signal is active
+- Strata scale correctly: 3–5 on easy (intermediate only), 8–10 on hard (+ expert)
+- Bridges activate: 6–20 per step depending on active cortex count
+
+**Why pred_loss is flat (~3.0–3.7)**: Expected. Trunk and cortex bases are frozen. Phase 2 only teaches routing (when to think harder), not language modeling. The pred_loss gains come in Phases 3–4 which build on this thermal routing.
+
+**Early stopping decision**: Stopped manually at step 10k (checkpoint `phase2_step10000.pt`). The thermal system had converged by step 4k — additional steps only reinforce the same behavior without measurable improvement. Running to 25k would have hit patience-based early stopping at epoch 3 regardless (pred_loss flat → no val_loss improvement between epochs).
+
+**Saved as**: `nano_phase2.flx` loaded from `{CKPT_DIR}/phase2_step10000.pt`.
+
 ## Files Modified
 
 | File | What changed |
