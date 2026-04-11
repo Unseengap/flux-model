@@ -8,6 +8,7 @@ Self-improvement with full rollback capability.
 from __future__ import annotations
 
 import math
+import warnings
 
 import torch
 import torch.nn as nn
@@ -133,6 +134,12 @@ def phase4_training_step(
     candidate = candidate.to(device)
 
     target_stratum = model.cortices[cortex_name].strata[stratum_name]
+    # Evict oldest delta when stack is at capacity
+    if len(target_stratum.delta_stack.deltas) >= target_stratum.delta_stack.capacity:
+        evicted = target_stratum.delta_stack.deltas[0]
+        target_stratum.delta_stack.deltas = nn.ModuleList(
+            list(target_stratum.delta_stack.deltas)[1:]
+        )
     target_stratum.delta_stack.push(candidate)
 
     # 5. Evaluate AFTER adding delta
@@ -231,6 +238,11 @@ def train_phase4(
     configure_gpu()
     model = model.to(device)
     meta_gen = meta_gen.to(device)
+
+    # Freeze all model weights — Phase 4 only trains meta_gen
+    for param in model.parameters():
+        param.requires_grad = False
+
     model.train()
     meta_gen.train()
 
@@ -256,7 +268,9 @@ def train_phase4(
         progress = (current_step - warmup_steps) / max(total_steps - warmup_steps, 1)
         return 0.5 * (1.0 + math.cos(math.pi * progress))
 
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
     # Resume from checkpoint
     start_step = 0
@@ -268,9 +282,11 @@ def train_phase4(
             optimizer.load_state_dict(ckpt["optimizer_state_dict"])
         start_step = ckpt.get("step", 0)
         start_epoch = ckpt.get("epoch", 0)
-        scheduler = torch.optim.lr_scheduler.LambdaLR(
-            optimizer, lr_lambda, last_epoch=start_step
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            scheduler = torch.optim.lr_scheduler.LambdaLR(
+                optimizer, lr_lambda, last_epoch=start_step
+            )
         print(f"Phase 4 | Resumed from {resume_from_checkpoint} "
               f"(epoch={start_epoch}, step={start_step})")
 
