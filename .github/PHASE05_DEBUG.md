@@ -103,6 +103,53 @@ lambda_cons=0.15,      # raised: stronger upward pull
 lambda_cal=0.05,       # lowered: gentle downward correction
 ```
 
+### Attempt 3: Consistency saturated again (still push/pull instability)
+
+**Symptoms** across 3 epochs:
+```
+step=0   | pred=14.59 cons=0.481 loops=3
+step=10  | pred=3.28  cons=0.831 loops=1   ← rising fast
+step=40  | pred=2.18  cons=0.998 loops=1   ← saturated
+step=100 | pred=1.49  cons=0.999 loops=1   ← stuck at 0.999
+```
+
+- Better than Attempt 1: `loops=1` not 0 (min_loops working)
+- Better than Attempt 2: consistency went up, not down
+- But still saturated at 0.999 by step 40 — the self-assessment is meaningless
+
+**Root cause — Inherent instability of push/pull**: The two forces approach has no stable equilibrium. The consistency head is a neural net — once it starts moving toward saturation, the gradient becomes vanishingly small (sigmoid saturation) and the opposing force can't recover. The rebalance from Attempt 2 shifted which direction wins, but didn't fix the fundamental problem: **there is no target for what consistency should actually be**.
+
+### Attempt 4: Supervised consistency target (current)
+
+**Root cause fix**: Replace the competing `cons_loss` (push up) and `cal_loss` (push down) with a single supervised MSE target derived from prediction quality:
+
+```python
+# Direct supervision: consistency should track prediction quality
+cons_target = torch.exp(-pred_loss.detach() / 2.0).clamp(0.05, 0.95)
+cons_loss = (final_consistency - cons_target).pow(2).mean()
+
+# Total loss — no more calibration_loss
+total_loss = pred_loss + lambda_cons * cons_loss + lambda_loop * eff_loss
+```
+
+**Why this works**:
+- Single MSE signal — no competing forces, no instability
+- `exp(-pred_loss/2)` maps prediction quality → consistency target:
+  - `pred=3.0` → target≈0.22 (bad predictions → low target)
+  - `pred=1.0` → target≈0.61 (moderate → moderate)
+  - `pred=0.3` → target≈0.86 (good → triggers early exit at 0.85)
+- Target moves with training: as predictions improve, target rises, consistency follows
+- Clamp(0.05, 0.95) prevents saturation at extremes
+- `lambda_cons=0.5` (MSE is small-scale since target and prediction are both in [0,1])
+
+**Config** (notebook training cell, Attempt 4):
+```python
+min_loops=1,           # force ≥1 refinement pass
+lambda_cons=0.5,       # supervised MSE: cons tracks exp(-pred/2)
+lambda_loop=0.01,
+# lambda_cal removed — no longer needed
+```
+
 ### Other notes
 
 - **TransformerEncoder warnings**: `enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True` — same harmless PyTorch diagnostic as Phase 4. Affects `model.py:174`, `model.py:77`, `meta_gen.py:57`, `hypothesis.py:56`. Not actionable.
