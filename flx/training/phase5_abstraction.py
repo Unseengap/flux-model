@@ -66,9 +66,9 @@ def phase5_training_step(
     max_loops: int = 3,
     min_loops: int = 1,
     consistency_threshold: float = 0.85,
-    lambda_cons: float = 0.3,
+    lambda_cons: float = 0.15,
     lambda_loop: float = 0.01,
-    lambda_cal: float = 0.2,
+    lambda_cal: float = 0.05,
 ) -> dict[str, Tensor]:
     """One Phase 5 training step: few-shot rule induction.
 
@@ -254,9 +254,9 @@ def train_phase5(
     max_loops: int = 3,
     min_loops: int = 1,
     consistency_threshold: float = 0.85,
-    lambda_cons: float = 0.3,
+    lambda_cons: float = 0.15,
     lambda_loop: float = 0.01,
-    lambda_cal: float = 0.2,
+    lambda_cal: float = 0.05,
     patience: int = 5,
     checkpoint_dir: str | None = None,
     device: str = "cpu",
