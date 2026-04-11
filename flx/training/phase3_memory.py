@@ -8,6 +8,8 @@ and retrieve them when relevant. Cross-session memory becomes native.
 from __future__ import annotations
 
 import math
+import random
+import warnings
 
 import torch
 import torch.nn as nn
@@ -178,15 +180,31 @@ def train_phase3(
     model.train()
     compressor.train()
 
+    # Freeze trunk, cortices, and decoder — Phase 0-2 weights should not drift.
+    # Only train memory controller, compressor, and merger (merger needs to learn
+    # to integrate memory-fused outputs).
+    for p in model.shared_trunk.parameters():
+        p.requires_grad = False
+    for cortex in model.cortices.values():
+        for p in cortex.parameters():
+            p.requires_grad = False
+    for p in model.decoder.parameters():
+        p.requires_grad = False
+    if model.thermal_estimator is not None:
+        for p in model.thermal_estimator.parameters():
+            p.requires_grad = False
+    if model.thalamic_router is not None:
+        for p in model.thalamic_router.parameters():
+            p.requires_grad = False
+    if model.bridges is not None:
+        for p in model.bridges.parameters():
+            p.requires_grad = False
+
     optimizer = torch.optim.AdamW(
         [
             {"params": model.memory_controller.parameters(), "lr": lr},
             {"params": compressor.parameters(), "lr": lr},
-            # Fine-tune other components at lower LR
-            {"params": model.shared_trunk.parameters(), "lr": lr * 0.1},
-            {"params": model.cortices.parameters(), "lr": lr * 0.1},
             {"params": model.cortex_merger.parameters(), "lr": lr * 0.1},
-            {"params": model.decoder.parameters(), "lr": lr * 0.1},
         ],
         weight_decay=weight_decay,
     )
@@ -207,7 +225,9 @@ def train_phase3(
         progress = (current_step - warmup_steps) / max(total_steps - warmup_steps, 1)
         return 0.5 * (1.0 + math.cos(math.pi * progress))
 
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
     # Resume from checkpoint
     start_step = 0
@@ -235,7 +255,13 @@ def train_phase3(
         epoch_pred_sum = 0.0
         epoch_steps = 0
 
-        for conv_idx, conversation in enumerate(conversation_data):
+        # Shuffle conversations each epoch to avoid ordering bias
+        epoch_order = list(range(len(conversation_data)))
+        random.shuffle(epoch_order)
+
+        for conv_idx_in_epoch, data_idx in enumerate(epoch_order):
+            conversation = conversation_data[data_idx]
+            conv_idx = conv_idx_in_epoch
             # Skip already-processed conversations when resuming mid-epoch
             if epoch == start_epoch and conv_idx < (start_step % len(conversation_data)) and resume_from_checkpoint is not None:
                 continue
@@ -346,4 +372,7 @@ def train_phase3(
             break
 
     early_stop.restore_best(model)
+    # Unfreeze all params before returning
+    for p in model.parameters():
+        p.requires_grad = True
     return history
